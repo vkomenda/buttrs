@@ -108,8 +108,8 @@ mod tests {
 
         // 2. Check the Chain Property: v_i^2 + v_i = v_{i-1}
         for i in 1..basis.len() {
-            let v_curr = Gf2p8_11d::from(basis[i]);
-            let v_prev = Gf2p8_11d::from(basis[i - 1]);
+            let v_curr = basis[i];
+            let v_prev = basis[i - 1];
 
             // v^2 + v
             let lhs = v_curr.mul(v_curr).add(v_curr);
@@ -120,7 +120,7 @@ mod tests {
         // For the sequence to be extendable, Tr(v_i) must be 0 for i < 7.
         for i in 0..7 {
             assert!(
-                !Gf2p8_11d::from(basis[i]).trace(),
+                !basis[i].trace(),
                 "Trace of v_{} must be 0 to allow extension",
                 i
             );
@@ -136,7 +136,7 @@ mod tests {
     }
 
     /// Helper to check linear independence over GF(2) using Gaussian Elimination
-    fn is_linearly_independent(basis: &[u8]) -> bool {
+    fn is_linearly_independent(basis: &[Gf2p8_11d]) -> bool {
         let mut matrix = basis.to_vec();
         let mut rank = 0;
 
@@ -144,7 +144,7 @@ mod tests {
             // Find a row with a 1 at the current bit position
             let mut pivot = None;
             for i in rank..matrix.len() {
-                if (matrix[i] >> bit) & 1 != 0 {
+                if (u8::from(matrix[i]) >> bit) & 1 != 0 {
                     pivot = Some(i);
                     break;
                 }
@@ -153,8 +153,8 @@ mod tests {
             if let Some(p) = pivot {
                 matrix.swap(rank, p);
                 for i in 0..matrix.len() {
-                    if i != rank && (matrix[i] >> bit) & 1 != 0 {
-                        matrix[i] ^= matrix[rank];
+                    if i != rank && (u8::from(matrix[i]) >> bit) & 1 != 0 {
+                        matrix[i] = matrix[i].add(matrix[rank]);
                     }
                 }
                 rank += 1;

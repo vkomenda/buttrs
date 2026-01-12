@@ -1,6 +1,6 @@
 use crate::bit_matrix::BitMatrix;
 
-pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq + Eq {
+pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
     const POLY: u16;
 
     fn add(self, other: Self) -> Self {
