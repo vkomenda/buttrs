@@ -113,7 +113,7 @@ pub fn reconstruct_in_place<const N: usize, G: Gf2p8>(
 pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
     received: &[(u8, &[u8])],    // received shards with their indices
     workspace: &mut [&mut [u8]], // pre-allocated N shards
-    twiddles: &[BitMatrix],      // 6 layers for 64 shards
+    twiddles: &[BitMatrix],      //
     basis: &[G],                 // Cantor basis
 ) -> bool {
     let shard_len = workspace[0].len();
@@ -129,10 +129,6 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
     // Prepare the workspace: map received shards & pre-weight
     // We only touch the indices we actually received.
     for &(idx, data) in received {
-        if idx >= 64 {
-            continue;
-        }
-
         // Copy original to workspace
         workspace[idx as usize].copy_from_slice(data);
 
