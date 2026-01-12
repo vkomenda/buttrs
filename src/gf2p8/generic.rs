@@ -1,4 +1,4 @@
-use crate::bit_matrix::BitMatrix;
+use super::bit_matrix::BitMatrix;
 
 pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
     const POLY: u16;
@@ -36,13 +36,13 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
         (sum & 1) != 0
     }
 
-    /// Solves the quadratic equation x^2 + x = c
+    /// Solves the quadratic equation x^2 + x = self
     /// Returns one of the two solutions (x and x+1)
     fn solve_quadratic(self) -> Option<Self> {
         if self.trace() {
             return None;
         }
-        // For GF(2^8), we can simply brute force or use the Half-Trace.
+        // For GF(2^8), we can simply brute force or use the half trace.
         // Brute force is fine for a one-time basis generation.
         for i in 0u8..=255 {
             let x: Self = i.into();
@@ -85,14 +85,14 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
         for i in 0..8 {
             cols[i] = self.mul((1u8 << i).into()).into();
         }
-        // To match vgf2p8affineqb, we store it so apply() does bit-matrix multiplication
+        // To match vgf2p8affineqb, we store it to do bit matrix multiplication
         BitMatrix(cols)
     }
 
     fn get_fft_twiddle_matrices() -> Vec<BitMatrix> {
         let basis = Self::generate_cantor_basis();
 
-        // Convert each basis element into an 8x8 bit-matrix.
+        // Convert each basis element into an 8x8 bit matrix.
         // In the actual Firedancer assembly, these are the constants
         // that get loaded into ZMM registers for vgf2p8affineqb.
         basis.into_iter().map(Self::into_bit_matrix).collect()
