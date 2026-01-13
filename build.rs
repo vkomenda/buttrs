@@ -1,7 +1,7 @@
 #[path = "src/gf2p8/mod.rs"]
 mod g;
 
-use g::{Gf2p8, Gf2p8_11d};
+use g::{CantorBasis, CantorBasis11d};
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -9,22 +9,21 @@ use std::path::Path;
 
 fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
-    let dest_path = Path::new(&out_dir).join("twiddle_factors_11d.rs");
+    let dest_path = Path::new(&out_dir).join("tables_11d.rs");
     let mut f = File::create(&dest_path).unwrap();
 
     writeln!(f, "use crate::BitMatrix;").unwrap();
 
-    // Generate the twiddle matrices using your trait logic
-    let matrices = Gf2p8_11d::get_fft_twiddle_matrices();
+    let basis = CantorBasis11d::new();
+    let twiddles = basis.into_fft_twiddle_matrices();
 
     writeln!(
         f,
-        "pub const TWIDDLE_FACTORS_11D: [BitMatrix; {}] = [",
-        matrices.len()
+        "\npub const TWIDDLE_FACTORS: [BitMatrix; {}] = [",
+        twiddles.len()
     )
     .unwrap();
-    for mat in matrices {
-        // Format the [u8; 8] as hex for the constant
+    for mat in twiddles {
         write!(f, "    BitMatrix([").unwrap();
         for byte in mat.0 {
             write!(f, "0x{:02x}, ", byte).unwrap();
@@ -33,8 +32,19 @@ fn main() {
     }
     writeln!(f, "];").unwrap();
 
-    // Tell Cargo to rerun if field.rs changes
+    let (num_points, points_iter) = basis.iter_subspace_points();
+
+    write!(f, "\npub const CANTOR_SUBSPACE: [u8; {}] = [", num_points).unwrap();
+    for (i, point) in points_iter.enumerate() {
+        if i % 16 == 0 {
+            write!(f, "\n    ").unwrap();
+        }
+        write!(f, "0x{:02x}, ", u8::from(point)).unwrap();
+    }
+    writeln!(f, "\n];").unwrap();
+
     println!("cargo:rerun-if-changed=src/lib.rs");
-    println!("cargo:rerun-if-changed=src/gf2p8.rs");
-    println!("cargo:rerun-if-changed=src/bit_matrix.rs");
+    println!("cargo:rerun-if-changed=src/gf2p8/mod.rs");
+    println!("cargo:rerun-if-changed=src/gf2p8/generic.rs");
+    println!("cargo:rerun-if-changed=src/gf2p8/bit_matrix.rs");
 }

@@ -1,7 +1,7 @@
 pub mod bit_matrix;
 pub mod generic;
 
-pub use generic::Gf2p8;
+pub use generic::{CantorBasis, Gf2p8};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Gf2p8_11d(pub u8);
@@ -22,6 +22,30 @@ impl Gf2p8 for Gf2p8_11d {
     const POLY: u16 = 0x11d;
 }
 
+#[derive(Copy, Clone)]
+pub struct CantorBasis11d(pub [Gf2p8_11d; 8]);
+
+impl FromIterator<Gf2p8_11d> for CantorBasis11d {
+    fn from_iter<I: IntoIterator<Item = Gf2p8_11d>>(iter: I) -> Self {
+        let mut arr = [0u8.into(); 8];
+        for (slot, item) in arr.iter_mut().zip(iter) {
+            *slot = item;
+        }
+        Self(arr)
+    }
+}
+
+impl IntoIterator for CantorBasis11d {
+    type Item = Gf2p8_11d;
+    type IntoIter = std::array::IntoIter<Gf2p8_11d, 8>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl CantorBasis<Gf2p8_11d> for CantorBasis11d {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33,32 +57,32 @@ mod tests {
 
     #[test]
     fn test_cantor_basis_properties() {
-        let basis = Gf2p8_11d::generate_cantor_basis();
+        let basis = CantorBasis11d::new();
 
-        // 1. Check length: For GF(2^8), we expect a basis of 8 elements.
-        assert_eq!(basis.len(), 8, "Basis should have 8 elements for GF(2^8)");
+        // Check length: For GF(2^8), we expect a basis of 8 elements.
+        assert_eq!(basis.0.len(), 8, "Basis should have 8 elements for GF(2^8)");
 
-        // 2. Check the Chain Property: v_i^2 + v_i = v_{i-1}
-        for i in 1..basis.len() {
-            let v_curr = basis[i];
-            let v_prev = basis[i - 1];
+        // Check the Chain Property: v_i^2 + v_i = v_{i-1}
+        for i in 1..basis.0.len() {
+            let v_curr = basis.0[i];
+            let v_prev = basis.0[i - 1];
 
             // v^2 + v
             let lhs = v_curr.mul(v_curr).add(v_curr);
             assert_eq!(lhs, v_prev, "Chain property failed at index {}", i);
         }
 
-        // 3. Check Trace Conditions
+        // Check Trace Conditions
         // For the sequence to be extendable, Tr(v_i) must be 0 for i < 7.
         for i in 0..7 {
             assert!(
-                !basis[i].trace(),
+                !basis.0[i].trace(),
                 "Trace of v_{} must be 0 to allow extension",
                 i
             );
         }
 
-        // 4. Check Linear Independence
+        // Check Linear Independence
         // We verify that the 8 elements are linearly independent over GF(2)
         // by checking if they can be reduced to an identity matrix (Rank 8).
         assert!(
@@ -68,8 +92,8 @@ mod tests {
     }
 
     /// Helper to check linear independence over GF(2) using Gaussian Elimination
-    fn is_linearly_independent(basis: &[Gf2p8_11d]) -> bool {
-        let mut matrix = basis.to_vec();
+    fn is_linearly_independent(basis: &CantorBasis11d) -> bool {
+        let mut matrix = basis.0.to_vec();
         let mut rank = 0;
 
         for bit in (0..8).rev() {
@@ -92,6 +116,6 @@ mod tests {
                 rank += 1;
             }
         }
-        rank == basis.len()
+        rank == basis.0.len()
     }
 }

@@ -58,11 +58,25 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
         None
     }
 
-    fn generate_cantor_basis() -> Vec<Self> {
+    /// Create a bit matrix for (x * self) mod POLY
+    fn into_bit_matrix(self) -> BitMatrix {
+        let mut m = BitMatrix([0u8; 8]);
+        for i in 0..8 {
+            m.0[i] = self.mul((1u8 << i).into()).into();
+        }
+
+        m.transpose()
+    }
+}
+
+pub trait CantorBasis<G: Gf2p8>:
+    Sized + Copy + Clone + FromIterator<G> + IntoIterator<Item = G>
+{
+    fn new() -> Self {
         let mut basis = Vec::new();
 
         // Start with v0 = 1
-        let mut current: Self = 1u8.into();
+        let mut current: G = 1u8.into();
         basis.push(current);
 
         // Try to extend the chain using v_i^2 + v_i = v_{i-1}
@@ -81,39 +95,27 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
                 break;
             }
         }
-        basis
+        basis.into_iter().collect()
     }
 
-    /// Create a bit matrix for (x * self) mod POLY
-    fn into_bit_matrix(self) -> BitMatrix {
-        let mut m = BitMatrix([0u8; 8]);
-        for i in 0..8 {
-            m.0[i] = self.mul((1u8 << i).into()).into();
-        }
-
-        m.transpose()
-    }
-
-    fn get_fft_twiddle_matrices() -> Vec<BitMatrix> {
-        let basis = Self::generate_cantor_basis();
-
+    fn into_fft_twiddle_matrices(self) -> Vec<BitMatrix> {
         // Convert each basis element into an 8x8 bit matrix.
         // In the actual Firedancer assembly, these are the constants
         // that get loaded into ZMM registers for vgf2p8affineqb.
-        basis.into_iter().map(Self::into_bit_matrix).collect()
+        self.into_iter().map(|a| a.into_bit_matrix()).collect()
     }
 
     /// Evaluates the erasure locator polynomial E(x) at point alpha_i.
     /// E(x) = product over missing indices j of (x ^ alpha_j).
-    fn eval_erasure_locator_poly(i: u8, erased_indices: &[u8], basis: &[Self]) -> Self {
-        let alpha_i = Self::get_subspace_point(i, basis);
-        let mut eval: Self = 1u8.into();
+    fn eval_erasure_locator_poly(&self, i: u8, erased_indices: &[u8]) -> G {
+        let alpha_i = self.get_subspace_point(i);
+        let mut eval: G = 1u8.into();
 
         for &j in erased_indices {
             if i == j {
                 continue;
             }
-            let alpha_j = Self::get_subspace_point(j, basis);
+            let alpha_j = self.get_subspace_point(j);
             let factor = alpha_i.add(alpha_j);
             eval = eval.mul(factor);
         }
@@ -121,13 +123,22 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
     }
 
     /// Returns the i-th point in the basis subspace.
-    fn get_subspace_point(index: u8, basis: &[Self]) -> Self {
-        let mut point: Self = 0u8.into();
-        for bit in 0..6 {
+    fn get_subspace_point(&self, index: u8) -> G {
+        let mut point: G = 0u8.into();
+        for (bit, elem) in self.into_iter().enumerate() {
             if (index >> bit) & 1 != 0 {
-                point = point.add(basis[bit]);
+                point = point.add(elem);
             }
         }
         point
+    }
+
+    fn iter_subspace_points(&self) -> (usize, impl Iterator<Item = G>) {
+        let basis_len = self.into_iter().count();
+        let num_points = 1 << basis_len;
+        (
+            num_points,
+            (0..num_points).map(|i| self.get_subspace_point(i as u8)),
+        )
     }
 }
