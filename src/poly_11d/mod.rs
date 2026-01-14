@@ -1,5 +1,5 @@
 use crate::gf2p8::{
-    CantorBasis, CantorBasis11d, Gf2p8_11d,
+    Gf2p8_11d,
     bit_matrix::BitMatrix,
     generic::{CantorBasisLut, Gf2p8Lut},
 };
@@ -15,7 +15,7 @@ impl Gf2p8Lut for Gf2p8_11d {
     }
 
     fn inv_lut(self) -> Self {
-        todo!()
+        generated::INV_TABLE[u8::from(self) as usize].into()
     }
 }
 
