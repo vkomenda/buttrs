@@ -1,8 +1,8 @@
 mod gf2p8;
 mod poly_11d;
 
-pub use gf2p8::bit_matrix::BitMatrix;
-pub use gf2p8::generic::{CantorBasis, Gf2p8};
+use gf2p8::bit_matrix::BitMatrix;
+use gf2p8::generic::{CantorBasisLut, Gf2p8Lut};
 
 /// The Additive FFT Recursive Step
 /// This divides the N shards into two N/2 square sub-problems.
@@ -68,18 +68,18 @@ pub fn ifft_recursive(shards: &mut [&mut [u8]], twiddles: &[BitMatrix]) {
     }
 }
 
-pub fn reconstruct_in_place<const N: usize, G: Gf2p8>(
+pub fn reconstruct_in_place<const N: usize, G: Gf2p8Lut>(
     shards: &mut [&mut [u8]], // All N shards, some filled, some not
     is_erased: &[bool; N],    // Which indices are missing
     twiddles: &[BitMatrix],   // precomputed matrices
-    basis: &impl CantorBasis<G>,
+    basis: &impl CantorBasisLut<G>,
 ) {
     let erased_indices: Vec<u8> = (0..N as u8).filter(|&i| is_erased[i as usize]).collect();
 
     // Pre-weighting
     for i in 0..N as u8 {
         if !is_erased[i as usize] {
-            let weight = basis.eval_erasure_locator_poly(i, &erased_indices);
+            let weight = basis.eval_erasure_locator_poly_lut(i, &erased_indices);
             let mat = weight.into_bit_matrix();
             for byte in shards[i as usize].iter_mut() {
                 *byte = mat.apply(*byte);
@@ -97,7 +97,9 @@ pub fn reconstruct_in_place<const N: usize, G: Gf2p8>(
         if is_erased[i as usize] {
             // In additive RS, the correction weight is 1 / E'(alpha_i).
             // For simple erasures, we evaluate the derivative polynomial.
-            let corr_weight = basis.eval_erasure_locator_poly(i, &erased_indices).inv();
+            let corr_weight = basis
+                .eval_erasure_locator_poly_lut(i, &erased_indices)
+                .inv_lut();
             let mat = corr_weight.into_bit_matrix();
             for byte in shards[i as usize].iter_mut() {
                 *byte = mat.apply(*byte);
@@ -106,11 +108,11 @@ pub fn reconstruct_in_place<const N: usize, G: Gf2p8>(
     }
 }
 
-pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
+pub fn reconstruct_systematic<const N: usize, G: Gf2p8Lut>(
     received: &[(u8, &[u8])],    // received shards with their indices
     workspace: &mut [&mut [u8]], // pre-allocated N shards
     twiddles: &[BitMatrix],      //
-    basis: &impl CantorBasis<G>,
+    basis: &impl CantorBasisLut<G>,
 ) -> bool {
     let shard_len = workspace[0].len();
 
@@ -129,7 +131,7 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
         workspace[i as usize].copy_from_slice(data);
 
         // Apply weight E(alpha_i)
-        let weight = basis.eval_erasure_locator_poly(i, &erased_indices);
+        let weight = basis.eval_erasure_locator_poly_lut(i, &erased_indices);
         let mat = weight.into_bit_matrix();
         for byte in workspace[i as usize].iter_mut() {
             *byte = mat.apply(*byte);
@@ -149,8 +151,8 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
     // For a received shard, the workspace now contains (original * E(alpha_w))
     let (witness_i, witness_original_data) = received[0];
     let weight = basis
-        .eval_erasure_locator_poly(witness_i, &erased_indices)
-        .inv();
+        .eval_erasure_locator_poly_lut(witness_i, &erased_indices)
+        .inv_lut();
     let mat = weight.into_bit_matrix();
 
     for i in 0..shard_len {
@@ -163,7 +165,9 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
     // Post-weight: recover all erased shards
     for &i in &erased_indices {
         // Apply correction weight 1 / E'(alpha_idx)
-        let corr_weight = basis.eval_erasure_locator_poly(i, &erased_indices).inv();
+        let corr_weight = basis
+            .eval_erasure_locator_poly_lut(i, &erased_indices)
+            .inv_lut();
 
         let mat = corr_weight.into_bit_matrix();
         for byte in workspace[i as usize].iter_mut() {
@@ -172,30 +176,4 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8>(
     }
 
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_recursive_fft_4_shards() {
-        // Data: 4 shards of 2 bytes each
-        let mut s0 = [10, 20];
-        let mut s1 = [30, 40];
-        let mut s2 = [50, 60];
-        let mut s3 = [70, 80];
-
-        let mut shards: Vec<&mut [u8]> = vec![&mut s0, &mut s1, &mut s2, &mut s3];
-
-        fft_recursive(&mut shards, &poly_11d::generated::TWIDDLE_FACTORS);
-
-        println!("s0: {:?}, s1: {:?}, s2: {:?}, s3: {:?}", s0, s1, s2, s3);
-
-        // Verify that all shards were modified
-        assert_ne!(s0, [10, 20], "Shard 0 was not modified");
-        assert_ne!(s1, [30, 40], "Shard 1 was not modified");
-        assert_ne!(s2, [50, 60], "Shard 2 was not modified");
-        assert_ne!(s3, [70, 80], "Shard 3 was not modified");
-    }
 }

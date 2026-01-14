@@ -24,11 +24,6 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
         (res as u8).into()
     }
 
-    /// Multiplicative inverse
-    fn inv(self) -> Self {
-        todo!()
-    }
-
     /// Trace function for GF(2^8) over GF(2)
     /// Tr(x) = x + x^2 + x^4 + x^8 + x^16 + x^32 + x^64 + x^128
     fn trace(self) -> bool {
@@ -123,10 +118,10 @@ pub trait CantorBasis<G: Gf2p8>:
     }
 
     /// Returns the i-th point in the basis subspace.
-    fn get_subspace_point(&self, index: u8) -> G {
+    fn get_subspace_point(&self, i: u8) -> G {
         let mut point: G = 0u8.into();
         for (bit, elem) in self.into_iter().enumerate() {
-            if (index >> bit) & 1 != 0 {
+            if (i >> bit) & 1 != 0 {
                 point = point.add(elem);
             }
         }
@@ -141,4 +136,36 @@ pub trait CantorBasis<G: Gf2p8>:
             (0..num_points).map(|i| self.get_subspace_point(i as u8)),
         )
     }
+}
+
+/// Precompted lookup table group operations.
+pub trait Gf2p8Lut: Gf2p8 {
+    /// Multiplication by table lookup.
+    fn mul_lut(self, other: Self) -> Self;
+
+    /// Multiplicative inverse by table lookup.
+    fn inv_lut(self) -> Self;
+}
+
+/// Precompted lookup table operations on the Cantor basis subspace.
+pub trait CantorBasisLut<G: Gf2p8Lut> {
+    /// Evaluates the erasure locator polynomial E(x) at point alpha_i.
+    /// E(x) = product over missing indices j of (x ^ alpha_j).
+    fn eval_erasure_locator_poly_lut(&self, i: u8, erased_indices: &[u8]) -> G {
+        let alpha_i = self.get_subspace_point_lut(i);
+        let mut eval: G = 1u8.into();
+
+        for &j in erased_indices {
+            if i == j {
+                continue;
+            }
+            let alpha_j = self.get_subspace_point_lut(j);
+            let factor = alpha_i.add(alpha_j);
+            eval = eval.mul_lut(factor);
+        }
+        eval
+    }
+
+    /// Returns the i-th point in the basis subspace.
+    fn get_subspace_point_lut(&self, i: u8) -> G;
 }
