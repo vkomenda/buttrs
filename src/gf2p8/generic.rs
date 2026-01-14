@@ -24,6 +24,22 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
         (res as u8).into()
     }
 
+    /// Brute-force the multiplicative inverse lookup table.
+    ///
+    /// 0 has no inverse. It is preserved in the output, so the case of 0 needs to be covered with checks.
+    fn iter_inverses() -> impl Iterator<Item = Self> {
+        std::iter::once(0u8.into()).chain((1u8..=255).map(|a| {
+            let gf_a: Self = a.into();
+            for b in 1u8..=255 {
+                let gf_b = b.into();
+                if gf_a.mul(gf_b) == 1u8.into() {
+                    return gf_b;
+                }
+            }
+            panic!("Cannot compute mul inverse of {a}");
+        }))
+    }
+
     /// Trace function for GF(2^8) over GF(2)
     /// Tr(x) = x + x^2 + x^4 + x^8 + x^16 + x^32 + x^64 + x^128
     fn trace(self) -> bool {

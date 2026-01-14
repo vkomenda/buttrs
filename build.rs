@@ -1,11 +1,24 @@
 #[path = "src/gf2p8/mod.rs"]
 mod g;
 
-use g::{CantorBasis, CantorBasis11d};
+use g::{CantorBasis, CantorBasis11d, Gf2p8, Gf2p8_11d};
 use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+fn write_points<G>(f: &mut File, it: impl Iterator<Item = G>)
+where
+    u8: From<G>,
+{
+    for (i, point) in it.enumerate() {
+        if i % 16 == 0 {
+            write!(f, "\n    ").unwrap();
+        }
+        write!(f, "0x{:02x}, ", u8::from(point)).unwrap();
+    }
+    writeln!(f, "\n];").unwrap();
+}
 
 fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -13,6 +26,11 @@ fn main() {
     let mut f = File::create(&dest_path).unwrap();
 
     writeln!(f, "use crate::BitMatrix;").unwrap();
+
+    let inv_iter = Gf2p8_11d::iter_inverses();
+
+    writeln!(f, "\npub const INV_TABLE: [u8; 256] = [",).unwrap();
+    write_points(&mut f, inv_iter);
 
     let basis = CantorBasis11d::new();
     let twiddles = basis.into_fft_twiddle_matrices();
@@ -35,13 +53,7 @@ fn main() {
     let (num_points, points_iter) = basis.iter_subspace_points();
 
     write!(f, "\npub const CANTOR_SUBSPACE: [u8; {}] = [", num_points).unwrap();
-    for (i, point) in points_iter.enumerate() {
-        if i % 16 == 0 {
-            write!(f, "\n    ").unwrap();
-        }
-        write!(f, "0x{:02x}, ", u8::from(point)).unwrap();
-    }
-    writeln!(f, "\n];").unwrap();
+    write_points(&mut f, points_iter);
 
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/gf2p8/mod.rs");
