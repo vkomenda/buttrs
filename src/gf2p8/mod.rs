@@ -20,6 +20,7 @@ impl From<Gf2p8_11d> for u8 {
 
 impl Gf2p8 for Gf2p8_11d {
     const POLY: u16 = 0x11d;
+    const PRIM_ELEM: Self = Self(2);
 }
 
 #[derive(Copy, Clone)]

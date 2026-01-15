@@ -1,7 +1,11 @@
 use super::bit_matrix::BitMatrix;
 
+pub const FIELD_SIZE: usize = 256;
+pub const EXP_TABLE_SIZE: usize = FIELD_SIZE * 2 - 2;
+
 pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
     const POLY: u16;
+    const PRIM_ELEM: Self;
 
     fn add(self, other: Self) -> Self {
         Self::from(self.into() ^ other.into())
@@ -22,6 +26,47 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
             b >>= 1;
         }
         (res as u8).into()
+    }
+
+    fn into_usize(self) -> usize {
+        let byte: u8 = self.into();
+        byte as usize
+    }
+
+    fn exp_log_tables() -> ([u8; EXP_TABLE_SIZE], [u8; FIELD_SIZE]) {
+        let mut exp_table = [0u8; EXP_TABLE_SIZE];
+        let mut log_table = [0u8; FIELD_SIZE];
+
+        let mut x = 1u8;
+        // build exp[0..254], log for non-zero
+        for (i, e) in exp_table.iter_mut().take(FIELD_SIZE - 1).enumerate() {
+            *e = x;
+            log_table[x as usize] = i as u8;
+
+            let gf_x: Self = x.into();
+            x = gf_x.mul(Self::PRIM_ELEM).into();
+        }
+
+        // copy for overflow-friendly indexing
+        for i in 0..FIELD_SIZE - 1 {
+            exp_table[FIELD_SIZE - 1 + i] = exp_table[i];
+        }
+
+        (exp_table, log_table)
+    }
+
+    fn inv_table(
+        exp_table: &[u8; EXP_TABLE_SIZE],
+        log_table: &[u8; FIELD_SIZE],
+    ) -> [u8; FIELD_SIZE] {
+        let mut inv_table = [0u8; FIELD_SIZE];
+
+        for (i, e) in inv_table.iter_mut().enumerate().skip(1) {
+            let li = log_table[i] as usize;
+            *e = exp_table[FIELD_SIZE - 1 - li];
+        }
+
+        inv_table
     }
 
     /// Brute-force the multiplicative inverse lookup table.

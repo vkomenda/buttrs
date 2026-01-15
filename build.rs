@@ -1,7 +1,10 @@
 #[path = "src/gf2p8/mod.rs"]
 mod g;
 
-use g::{CantorBasis, CantorBasis11d, Gf2p8, Gf2p8_11d};
+use g::{
+    CantorBasis, CantorBasis11d, Gf2p8, Gf2p8_11d,
+    generic::{EXP_TABLE_SIZE, FIELD_SIZE},
+};
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -27,10 +30,14 @@ fn main() {
 
     writeln!(f, "use crate::BitMatrix;").unwrap();
 
-    let inv_iter = Gf2p8_11d::iter_inverses();
-
-    writeln!(f, "\npub const INV_TABLE: [u8; 256] = [",).unwrap();
-    write_points(&mut f, inv_iter);
+    let (exp_table, log_table) = Gf2p8_11d::exp_log_tables();
+    let inv_table = Gf2p8_11d::inv_table(&exp_table, &log_table);
+    write!(f, "\npub const EXP_TABLE: [u8; {}] = [", EXP_TABLE_SIZE).unwrap();
+    write_points(&mut f, exp_table.into_iter());
+    write!(f, "\npub const LOG_TABLE: [u8; {}] = [", FIELD_SIZE).unwrap();
+    write_points(&mut f, log_table.into_iter());
+    write!(f, "\npub const INV_TABLE: [u8; {}] = [", FIELD_SIZE).unwrap();
+    write_points(&mut f, inv_table.into_iter());
 
     let basis = CantorBasis11d::new();
     let twiddles = basis.into_fft_twiddle_matrices();

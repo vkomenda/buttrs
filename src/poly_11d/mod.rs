@@ -11,7 +11,12 @@ pub mod generated {
 
 impl Gf2p8Lut for Gf2p8_11d {
     fn mul_lut(self, other: Self) -> Self {
-        todo!()
+        if self.0 == 0 || other.0 == 0 {
+            return 0u8.into();
+        }
+        let self_log = generated::LOG_TABLE[self.0 as usize] as usize;
+        let other_log = generated::LOG_TABLE[other.0 as usize] as usize;
+        generated::EXP_TABLE[self_log + other_log].into()
     }
 
     fn inv_lut(self) -> Self {
