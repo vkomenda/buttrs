@@ -68,12 +68,49 @@ pub fn ifft_recursive(shards: &mut [&mut [u8]], twiddles: &[BitMatrix]) {
     }
 }
 
+/// M is the number of data shards and is a power of 2 <= 128.
+pub fn encode<const M: usize, G: Gf2p8Lut>(
+    data: &[&[u8]],           // N data shards
+    parity: &mut [&mut [u8]], // N parity shards
+    twiddles: &[BitMatrix],   // log2 N layers [Mat(vn), ..., Mat(v0)]
+) {
+    // Move data into the parity slots
+    for i in 0..M {
+        parity[i].copy_from_slice(data[i]);
+    }
+
+    // Interpolate
+    // Treat the data as evaluations and find the polynomial coefficients.
+    // Use layers 1.. (the M-shard subspace twiddles).
+    ifft_recursive(parity, &twiddles[1..]);
+
+    // The Bridge (Layer 0 / Stage 0)
+    // This is the interaction between the data subspace and parity subspace. The widest butterfly.
+    let twiddle = twiddles[0];
+    for i in 0..M {
+        for j in 0..parity[i].len() {
+            // Only modify the parity side
+            parity[i][j] = twiddle.apply(parity[i][j]);
+        }
+    }
+
+    // Evaluate
+    // Convert the modified coefficients into actual parity evaluations.
+    fft_recursive(parity, &twiddles[1..]);
+}
+
+/// N is the sum of the number of data and parity shards and is a power of 2 <= 256.
 pub fn reconstruct_in_place<const N: usize, G: Gf2p8Lut>(
     shards: &mut [&mut [u8]], // All N shards, some filled, some not
     is_erased: &[bool; N],    // Which indices are missing
     twiddles: &[BitMatrix],   // precomputed matrices
     basis: &impl CantorBasisLut<G>,
 ) {
+    debug_assert!(
+        (1..=8).any(|i| 2usize.pow(i) == N),
+        "Number of shards should be a power of 2 up to 256"
+    );
+
     let erased_indices: Vec<u8> = (0..N as u8).filter(|&i| is_erased[i as usize]).collect();
 
     // Pre-weighting
@@ -108,12 +145,18 @@ pub fn reconstruct_in_place<const N: usize, G: Gf2p8Lut>(
     }
 }
 
+/// N is the sum of the number of data and parity shards and is a power of 2 <= 256.
 pub fn reconstruct_systematic<const N: usize, G: Gf2p8Lut>(
     received: &[(u8, &[u8])],    // received shards with their indices
     workspace: &mut [&mut [u8]], // pre-allocated N shards
-    twiddles: &[BitMatrix],      //
+    twiddles: &[BitMatrix],
     basis: &impl CantorBasisLut<G>,
 ) -> bool {
+    debug_assert!(
+        (1..=8).any(|i| 2usize.pow(i) == N),
+        "Number of shards should be a power of 2 up to 256"
+    );
+
     let shard_len = workspace[0].len();
 
     // Identify which indices are missing (needed for locator polynomial)

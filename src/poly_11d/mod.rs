@@ -48,7 +48,7 @@ impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fft_recursive;
+    use crate::{encode, fft_recursive, reconstruct_systematic};
 
     #[test]
     fn test_recursive_fft_4_shards() {
@@ -62,12 +62,106 @@ mod tests {
 
         fft_recursive(&mut shards, &generated::TWIDDLE_FACTORS);
 
-        println!("s0: {:?}, s1: {:?}, s2: {:?}, s3: {:?}", s0, s1, s2, s3);
-
         // Verify that all shards were modified
         assert_ne!(s0, [10, 20], "Shard 0 was not modified");
         assert_ne!(s1, [30, 40], "Shard 1 was not modified");
         assert_ne!(s2, [50, 60], "Shard 2 was not modified");
         assert_ne!(s3, [70, 80], "Shard 3 was not modified");
+    }
+
+    /// Helper to create a 64-shard codeword (32 data, 32 parity)
+    fn generate_test_codeword(shard_len: usize) -> Vec<Vec<u8>> {
+        let basis = CantorBasisLut11d::new();
+        let twiddles = &basis.twiddle_factors[2..8];
+
+        // Create 32 data shards with distinct patterns
+        let mut shards = vec![vec![0u8; shard_len]; 64];
+        for i in 0..32 {
+            for j in 0..shard_len {
+                shards[i][j] = (i ^ j) as u8;
+            }
+        }
+
+        // Encode to generate shards 32..64 (Parity)
+        // Note: Using a temporary slice-of-mut-slices for the encoder
+        let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut_slice()).collect();
+        let (data_part, parity_part) = refs.split_at_mut(32);
+
+        encode::<32, Gf2p8_11d>(
+            &data_part.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
+            parity_part,
+            twiddles,
+        );
+
+        shards
+    }
+
+    #[test]
+    fn test_reconstruct_success_max_erasures() {
+        let shard_len = 64;
+        let original_codeword = generate_test_codeword(shard_len);
+        let basis = CantorBasisLut11d::new();
+        let twiddles = &basis.twiddle_factors[2..8];
+
+        // Simulate receiving exactly 32 shards (0..16 data and 32..48 parity)
+        let mut received = Vec::new();
+        for i in 0..16 {
+            received.push((i as u8, original_codeword[i].as_slice()));
+        }
+        for i in 32..48 {
+            received.push((i as u8, original_codeword[i].as_slice()));
+        }
+
+        // Setup workspace
+        let mut workspace_data = vec![vec![0u8; shard_len]; 64];
+        let mut workspace: Vec<&mut [u8]> = workspace_data
+            .iter_mut()
+            .map(|s| s.as_mut_slice())
+            .collect();
+
+        // Reconstruct
+        let success =
+            reconstruct_systematic::<64, Gf2p8_11d>(&received, &mut workspace, twiddles, &basis);
+
+        assert!(success, "Reconstruction should have succeeded");
+
+        // Verify a missing data shard
+        assert_eq!(
+            workspace[20], original_codeword[20],
+            "Data shard 20 mismatch"
+        );
+
+        // Verify a missing parity shard
+        assert_eq!(
+            workspace[50], original_codeword[50],
+            "Parity shard 50 mismatch"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_no_erasures() {
+        let shard_len = 8;
+        let original_codeword = generate_test_codeword(shard_len);
+        let basis = CantorBasisLut11d::new();
+        let twiddles = &basis.twiddle_factors[2..8];
+
+        let mut received = Vec::new();
+        for i in 0..64 {
+            received.push((i as u8, original_codeword[i].as_slice()));
+        }
+
+        let mut workspace_data = vec![vec![0u8; shard_len]; 64];
+        let mut workspace: Vec<&mut [u8]> = workspace_data
+            .iter_mut()
+            .map(|s| s.as_mut_slice())
+            .collect();
+
+        let success =
+            reconstruct_systematic::<64, Gf2p8_11d>(&received, &mut workspace, twiddles, &basis);
+
+        assert!(success);
+        for i in 0..64 {
+            assert_eq!(workspace[i], original_codeword[i]);
+        }
     }
 }
