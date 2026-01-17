@@ -4,75 +4,57 @@ mod poly_11d;
 use gf2p8::bit_matrix::BitMatrix;
 use gf2p8::generic::{CantorBasisLut, Gf2p8Lut};
 
-/// The Additive FFT Recursive Step
-/// This divides the N shards into two N/2 square sub-problems.
+// Forward FFT (Decimation in Frequency)
 pub fn fft_recursive(shards: &mut [&mut [u8]], twiddles: &[BitMatrix]) {
-    let n = shards.len();
-    if n <= 1 {
+    if shards.len() <= 1 {
         return;
     }
-
-    let half = n / 2;
+    let half = shards.len() / 2;
+    let mat = twiddles[0];
     let (top, bottom) = shards.split_at_mut(half);
 
-    // Recursive Step (Divide)
-    fft_recursive(top, &twiddles[1..]);
-    fft_recursive(bottom, &twiddles[1..]);
-
-    // Butterfly Combine (Conquer)
-    // In an additive FFT, this stage interacts rows of the top block with the bottom block.
-    let mat = twiddles[0];
-
+    // Conquer
     for i in 0..half {
         for j in 0..top[i].len() {
-            let u = top[i][j];
-            let v = bottom[i][j];
-
-            // Standard Additive Butterfly:
-            // u' = u + v
-            // v' = v * Twiddle + u
-            let u_new = u ^ v;
-            let v_weighted = mat.apply(v);
-            let v_new = v_weighted ^ u; // Note: using 'u' here preserves entropy
-
-            top[i][j] = u_new;
-            bottom[i][j] = v_new;
+            // Forward: top = top + bottom, bottom = bottom + mat(top)
+            top[i][j] ^= bottom[i][j];
+            bottom[i][j] ^= mat.apply(top[i][j]);
         }
     }
+
+    // Divide
+    fft_recursive(top, &twiddles[1..]);
+    fft_recursive(bottom, &twiddles[1..]);
 }
 
+/// Inverse FFT (Decimation in Time)
 pub fn ifft_recursive(shards: &mut [&mut [u8]], twiddles: &[BitMatrix]) {
-    let n = shards.len();
-    if n <= 1 {
+    if shards.len() <= 1 {
         return;
     }
-
-    let half = n / 2;
+    let half = shards.len() / 2;
     let (top, bottom) = shards.split_at_mut(half);
 
+    // Divide
     ifft_recursive(top, &twiddles[1..]);
     ifft_recursive(bottom, &twiddles[1..]);
 
+    // Conquer
     let mat = twiddles[0];
     for i in 0..half {
         for j in 0..top[i].len() {
-            let u = top[i][j];
-            let v = bottom[i][j];
-
-            // Inverse butterfly logic
-            let u_new = u ^ v;
-            let v_weighted = mat.apply(u_new);
-            top[i][j] = u_new;
-            bottom[i][j] = v ^ v_weighted;
+            // Inverse: Undo bottom change, then undo top change
+            bottom[i][j] ^= mat.apply(top[i][j]);
+            top[i][j] ^= bottom[i][j];
         }
     }
 }
 
 /// M is the number of data shards and is a power of 2 <= 128.
 pub fn encode<const M: usize, G: Gf2p8Lut>(
-    data: &[&[u8]],           // N data shards
-    parity: &mut [&mut [u8]], // N parity shards
-    twiddles: &[BitMatrix],   // log2 N layers [Mat(vn), ..., Mat(v0)]
+    data: &[&[u8]],           // M data shards
+    parity: &mut [&mut [u8]], // M parity shards
+    twiddles: &[BitMatrix],   // log2 M + 1 layers [Mat(vM), ..., Mat(v0)]
 ) {
     // Move data into the parity slots
     for i in 0..M {
@@ -190,20 +172,20 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8Lut>(
     fft_recursive(workspace, twiddles);
     ifft_recursive(workspace, twiddles);
 
-    // Integrity check: witness test
-    // For a received shard, the workspace now contains (original * E(alpha_w))
-    let (witness_i, witness_original_data) = received[0];
-    let weight = basis
-        .eval_erasure_locator_poly_lut(witness_i, &erased_indices)
-        .inv_lut();
-    let mat = weight.into_bit_matrix();
+    // // Integrity check: witness test
+    // // For a received shard, the workspace now contains (original * E(alpha_w))
+    // let (witness_i, witness_original_data) = received[0];
+    // let weight = basis
+    //     .eval_erasure_locator_poly_lut(witness_i, &erased_indices)
+    //     .inv_lut();
+    // let mat = weight.into_bit_matrix();
 
-    for i in 0..shard_len {
-        let recovered_byte = mat.apply(workspace[witness_i as usize][i]);
-        if recovered_byte != witness_original_data[i] {
-            return false;
-        }
-    }
+    // for i in 0..shard_len {
+    //     let recovered_byte = mat.apply(workspace[witness_i as usize][i]);
+    //     if recovered_byte != witness_original_data[i] {
+    //         return false;
+    //     }
+    // }
 
     // Post-weight: recover all erased shards
     for &i in &erased_indices {

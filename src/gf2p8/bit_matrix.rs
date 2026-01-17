@@ -9,9 +9,12 @@ impl BitMatrix {
         let mut res = 0u8;
         for i in 0..8 {
             let prod = v & self.0[i];
-            if prod.count_ones().is_multiple_of(2) {
+            if !prod.count_ones().is_multiple_of(2) {
                 res |= 1 << i;
             }
+            // if (v >> i) & 1 != 0 {
+            //     res ^= self.0[i];
+            // }
         }
         res
     }

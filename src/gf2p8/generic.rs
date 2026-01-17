@@ -221,8 +221,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
                 continue;
             }
             let alpha_j = self.get_subspace_point_lut(j);
-            let factor = alpha_i.add(alpha_j);
-            eval = eval.mul_lut(factor);
+            eval = eval.mul_lut(alpha_i.add(alpha_j));
         }
         eval
     }

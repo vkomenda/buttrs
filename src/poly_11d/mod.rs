@@ -48,10 +48,22 @@ impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{encode, fft_recursive, reconstruct_systematic};
+    use crate::{encode, fft_recursive, gf2p8::Gf2p8, reconstruct_systematic};
 
     #[test]
-    fn test_recursive_fft_4_shards() {
+    fn bit_matrix_correctness() {
+        let a: Gf2p8_11d = 0x42.into();
+        let b = 0x13.into();
+        let expected = a.mul_lut(b);
+
+        let mat = a.into_bit_matrix();
+        let actual = mat.apply(b.into());
+
+        assert_eq!(actual, expected.into());
+    }
+
+    #[test]
+    fn recursive_fft_4_shards() {
         // Data: 4 shards of 2 bytes each
         let mut s0 = [10, 20];
         let mut s1 = [30, 40];
@@ -72,7 +84,7 @@ mod tests {
     /// Helper to create a 64-shard codeword (32 data, 32 parity)
     fn generate_test_codeword(shard_len: usize) -> Vec<Vec<u8>> {
         let basis = CantorBasisLut11d::new();
-        let twiddles = &basis.twiddle_factors[2..8];
+        let twiddles = &basis.twiddle_factors[2..];
 
         // Create 32 data shards with distinct patterns
         let mut shards = vec![vec![0u8; shard_len]; 64];
@@ -97,11 +109,11 @@ mod tests {
     }
 
     #[test]
-    fn test_reconstruct_success_max_erasures() {
+    fn reconstruct_success_max_erasures() {
         let shard_len = 64;
         let original_codeword = generate_test_codeword(shard_len);
         let basis = CantorBasisLut11d::new();
-        let twiddles = &basis.twiddle_factors[2..8];
+        let twiddles = &basis.twiddle_factors[2..];
 
         // Simulate receiving exactly 32 shards (0..16 data and 32..48 parity)
         let mut received = Vec::new();
@@ -139,11 +151,11 @@ mod tests {
     }
 
     #[test]
-    fn test_reconstruct_no_erasures() {
+    fn reconstruct_no_erasures() {
         let shard_len = 8;
         let original_codeword = generate_test_codeword(shard_len);
         let basis = CantorBasisLut11d::new();
-        let twiddles = &basis.twiddle_factors[2..8];
+        let twiddles = &basis.twiddle_factors[2..];
 
         let mut received = Vec::new();
         for i in 0..64 {
