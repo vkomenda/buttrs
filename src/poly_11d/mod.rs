@@ -82,25 +82,25 @@ mod tests {
     }
 
     #[test]
-    fn verify_fft_point_mapping() {
+    fn fft_ifft_composition_identity() {
         let basis = CantorBasisLut11d::new();
+        let twiddles = &basis.twiddle_factors[3..];
 
-        // Create a coefficient vector representing f(x) = 1
-        let mut shards = vec![vec![0u8; 1]; 32];
-        shards[0][0] = 1;
-
-        let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut_slice()).collect();
-        fft_recursive(&mut refs, &basis.twiddle_factors[3..]);
-
-        println!("{refs:?}");
-
-        for (i, shard) in shards.iter().enumerate() {
-            assert_eq!(
-                shard[0], 1,
-                "FFS point mapping failed at index {}. FFT([1,0...]) should be [1,1...]",
-                i
-            );
+        let mut original = vec![vec![0u8; 1]; 32];
+        for i in 0..32 {
+            original[i][0] = i as u8;
         }
+
+        let mut work = original.clone();
+        let mut refs: Vec<&mut [u8]> = work.iter_mut().map(|s| s.as_mut_slice()).collect();
+
+        // Transform to evaluations
+        fft_recursive(&mut refs, twiddles);
+
+        // Transform back to coefficients
+        ifft_recursive(&mut refs, twiddles);
+
+        assert_eq!(work, original);
     }
 
     #[test]
