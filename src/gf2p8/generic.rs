@@ -181,7 +181,8 @@ pub trait CantorBasis<G: Gf2p8>:
     /// Returns the i-th point in the basis subspace.
     fn get_subspace_point(&self, i: u8) -> G {
         let mut point: G = 0u8.into();
-        for (bit, elem) in self.into_iter().enumerate() {
+        // Reverse the order of indices to match the reversed storage order.
+        for (bit, elem) in (0..8).rev().zip(self.into_iter()) {
             if (i >> bit) & 1 != 0 {
                 point = point.add(elem);
             }
@@ -199,13 +200,28 @@ pub trait CantorBasis<G: Gf2p8>:
     }
 }
 
-/// Precompted lookup table group operations.
+/// Precomputed lookup table group operations.
 pub trait Gf2p8Lut: Gf2p8 {
     /// Multiplication by table lookup.
     fn mul_lut(self, other: Self) -> Self;
 
     /// Multiplicative inverse by table lookup.
     fn inv_lut(self) -> Self;
+
+    /// Helper to multiply a shard by a scalar
+    fn scale_shard(self, shard: &mut [u8]) {
+        if self == 1u8.into() {
+            return;
+        }
+        if self == 0u8.into() {
+            shard.fill(0);
+            return;
+        }
+
+        for byte in shard.iter_mut() {
+            *byte = self.mul_lut(Self::from(*byte)).into();
+        }
+    }
 }
 
 /// Precompted lookup table operations on the Cantor basis subspace.

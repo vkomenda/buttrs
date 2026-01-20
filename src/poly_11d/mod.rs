@@ -48,7 +48,7 @@ impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{encode, fft_recursive, gf2p8::Gf2p8, reconstruct_systematic};
+    use crate::{encode, fft_recursive, gf2p8::Gf2p8, ifft_recursive, reconstruct_systematic};
 
     #[test]
     fn bit_matrix_correctness() {
@@ -79,6 +79,76 @@ mod tests {
         assert_ne!(s1, [30, 40], "Shard 1 was not modified");
         assert_ne!(s2, [50, 60], "Shard 2 was not modified");
         assert_ne!(s3, [70, 80], "Shard 3 was not modified");
+    }
+
+    #[test]
+    fn verify_fft_point_mapping() {
+        let basis = CantorBasisLut11d::new();
+
+        // Create a coefficient vector representing f(x) = 1
+        let mut shards = vec![vec![0u8; 1]; 32];
+        shards[0][0] = 1;
+
+        let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut_slice()).collect();
+        fft_recursive(&mut refs, &basis.twiddle_factors[3..]);
+
+        println!("{refs:?}");
+
+        for (i, shard) in shards.iter().enumerate() {
+            assert_eq!(
+                shard[0], 1,
+                "FFS point mapping failed at index {}. FFT([1,0...]) should be [1,1...]",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn dual_subspace_identity() {
+        const N_DATA_SHARDS: usize = 16;
+        const SHARD_LEN: usize = 8;
+        let basis = CantorBasisLut11d::new();
+        let twiddles = &basis.twiddle_factors[3..];
+        let bridge_mat = twiddles[0];
+        let recursive_twiddles = &twiddles[1..];
+
+        let mut data_shards = vec![vec![0u8; SHARD_LEN]; N_DATA_SHARDS];
+        for i in 0..N_DATA_SHARDS {
+            for j in 0..SHARD_LEN {
+                data_shards[i][j] = (i ^ j) as u8; // Random-ish data
+            }
+        }
+
+        let mut expected_parity = vec![vec![0u8; SHARD_LEN]; N_DATA_SHARDS];
+        {
+            let data_refs: Vec<&[u8]> = data_shards.iter().map(|s| s.as_slice()).collect();
+            let mut parity_refs: Vec<&mut [u8]> = expected_parity
+                .iter_mut()
+                .map(|s| s.as_mut_slice())
+                .collect();
+            encode::<16, Gf2p8_11d>(&data_refs, &mut parity_refs, twiddles);
+        }
+
+        let mut manual_parity = data_shards.clone();
+        let mut manual_refs: Vec<&mut [u8]> =
+            manual_parity.iter_mut().map(|s| s.as_mut_slice()).collect();
+        ifft_recursive(&mut manual_refs, recursive_twiddles);
+
+        for i in 0..N_DATA_SHARDS {
+            for j in 0..SHARD_LEN {
+                manual_refs[i][j] = bridge_mat.apply(manual_refs[i][j]);
+            }
+        }
+
+        fft_recursive(&mut manual_refs, recursive_twiddles);
+
+        for i in 0..N_DATA_SHARDS {
+            assert_eq!(
+                manual_refs[i], expected_parity[i],
+                "Bridge identity failed at shard {}. Identity: P = FFT(Bridge(IFFT(D)))",
+                i
+            );
+        }
     }
 
     /// Helper to create a 64-shard codeword (32 data, 32 parity)

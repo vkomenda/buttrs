@@ -127,6 +127,92 @@ pub fn reconstruct_in_place<const N: usize, G: Gf2p8Lut>(
     }
 }
 
+pub fn reconstruct_systematic<const N: usize, G: Gf2p8Lut>(
+    received: &[(u8, &[u8])],
+    workspace: &mut [&mut [u8]],
+    twiddles: &[BitMatrix], // e.g., &basis.twiddle_factors[2..]
+    basis: &impl CantorBasisLut<G>,
+) -> bool {
+    let m = N / 2;
+    let mut is_erased = [true; N];
+    for &(idx, _) in received {
+        if (idx as usize) < N {
+            is_erased[idx as usize] = false;
+        }
+    }
+
+    // Identify exactly M erasures
+    let mut erasures = Vec::with_capacity(m);
+    for i in 0..N {
+        if is_erased[i] {
+            erasures.push(i as u8);
+        }
+    }
+    if erasures.len() > m {
+        return false;
+    }
+    let mut pad = 0;
+    while erasures.len() < m {
+        if !is_erased[pad] && !erasures.contains(&(pad as u8)) {
+            erasures.push(pad as u8);
+        }
+        pad += 1;
+    }
+
+    // Weight knowns by L(alpha_i), erasures/dummies to 0
+    for i in 0..N {
+        if !erasures.contains(&(i as u8)) {
+            let w = basis.eval_erasure_locator_poly_lut(i as u8, &erasures);
+            w.scale_shard(workspace[i]);
+        } else {
+            workspace[i].fill(0);
+        }
+    }
+
+    // Transform to find the syndrome
+    let (data_part, parity_part) = workspace.split_at_mut(m);
+    ifft_recursive(data_part, &twiddles[1..]);
+    ifft_recursive(parity_part, &twiddles[1..]);
+
+    let bridge = twiddles[0];
+    let bridge_inv = bridge.inv().expect("Bridge not invertible");
+
+    for i in 0..m {
+        for j in 0..data_part[i].len() {
+            // S = Parity ^ Bridge(Data)
+            let syn = parity_part[i][j] ^ bridge.apply(data_part[i][j]);
+
+            // Overwrite coefficients with Syndrome (Error)
+            // Error_Data = Bridge_Inv(S), Error_Parity = S
+            data_part[i][j] = bridge_inv.apply(syn);
+            parity_part[i][j] = syn;
+        }
+    }
+
+    fft_recursive(data_part, &twiddles[1..]);
+    fft_recursive(parity_part, &twiddles[1..]);
+
+    // Final un-weight and Restore
+    for i in 0..N {
+        let weight = basis.eval_erasure_locator_poly_lut(i as u8, &erasures);
+        let inv_weight = weight.inv_lut();
+
+        if is_erased[i] {
+            inv_weight.scale_shard(workspace[i]);
+        } else {
+            // Restore from received to ensure the known data is original
+            for &(idx, data) in received {
+                if idx as usize == i {
+                    workspace[i].copy_from_slice(data);
+                    break;
+                }
+            }
+        }
+    }
+    true
+}
+
+/*
 /// N is the sum of the number of data and parity shards and is a power of 2 <= 256.
 pub fn reconstruct_systematic<const N: usize, G: Gf2p8Lut>(
     received: &[(u8, &[u8])],    // received shards with their indices
@@ -202,3 +288,4 @@ pub fn reconstruct_systematic<const N: usize, G: Gf2p8Lut>(
 
     true
 }
+*/

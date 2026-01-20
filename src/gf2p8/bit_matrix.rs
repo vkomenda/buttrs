@@ -33,4 +33,32 @@ impl BitMatrix {
 
         Self(rows)
     }
+
+    /// Invert the bit matrix using Gaussian elimination.
+    pub fn inv(&self) -> Option<Self> {
+        let mut mat = self.0;
+        let mut inv = [1, 2, 4, 8, 16, 32, 64, 128]; // Identity
+
+        for i in 0..8 {
+            // Find pivot
+            let mut pivot = i;
+            while pivot < 8 && (mat[pivot] & (1 << i)) == 0 {
+                pivot += 1;
+            }
+            if pivot == 8 {
+                return None;
+            }
+
+            mat.swap(i, pivot);
+            inv.swap(i, pivot);
+
+            for j in 0..8 {
+                if i != j && (mat[j] & (1 << i)) != 0 {
+                    mat[j] ^= mat[i];
+                    inv[j] ^= inv[i];
+                }
+            }
+        }
+        Some(Self(inv))
+    }
 }
