@@ -57,6 +57,25 @@ impl BitMatrix {
         }
         Some(Self(inv))
     }
+
+    #[cfg(test)]
+    pub fn rank(&self) -> usize {
+        let mut rows = self.0;
+        let mut rank = 0;
+        for i in 0..8 {
+            let pivot = (rank..8).find(|&r| (rows[r] & (1 << i)) != 0);
+            if let Some(p) = pivot {
+                rows.swap(rank, p);
+                for j in 0..8 {
+                    if j != rank && (rows[j] & (1 << i)) != 0 {
+                        rows[j] ^= rows[rank];
+                    }
+                }
+                rank += 1;
+            }
+        }
+        rank
+    }
 }
 
 #[cfg(test)]

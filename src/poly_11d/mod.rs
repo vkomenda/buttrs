@@ -77,6 +77,20 @@ mod tests {
     }
 
     #[test]
+    fn twiddle_matrix_ranks() {
+        let basis = CantorBasis11d::new();
+        let twiddles = basis.generate_lch_twiddle_tower::<256>();
+
+        for (i, mat) in twiddles.iter().enumerate() {
+            let rank = mat.rank();
+            assert_eq!(
+                rank, 8,
+                "Twiddle matrix at layer {} is singular (Rank {})",
+                i, rank
+            );
+        }
+    }
+    #[test]
     fn verify_unique_points() {
         let basis = CantorBasis11d::new();
         let twiddles = basis.generate_lch_twiddle_tower::<256>();
