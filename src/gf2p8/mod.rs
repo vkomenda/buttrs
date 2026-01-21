@@ -57,11 +57,47 @@ mod tests {
     }
 
     #[test]
+    fn add_once() {
+        let a = Gf2p8_11d::from(0x57);
+        let b = Gf2p8_11d::from(0x83);
+        assert_eq!(u8::from(a.add(b)), 0x57 ^ 0x83);
+        assert_eq!(u8::from(a.add(a)), 0);
+    }
+
+    #[test]
+    fn basic_mul() {
+        let a = Gf2p8_11d::from(0x57);
+        assert_eq!(u8::from(a.mul(0.into())), 0);
+        assert_eq!(u8::from(a.mul(1.into())), 0x57);
+    }
+
+    #[test]
+    fn wrap_mul() {
+        let two = Gf2p8_11d::from(2);
+        let high_bit = Gf2p8_11d::from(0x80);
+        assert_eq!(u8::from(two.mul(high_bit)), 0x1d);
+    }
+
+    #[test]
+    fn mul_inv() {
+        for i in 1..=255 {
+            let a = Gf2p8_11d::from(i);
+            let mut inv = Gf2p8_11d::from(0);
+            for j in 1..=255 {
+                if u8::from(a.mul(j.into())) == 1 {
+                    inv = j.into();
+                    break;
+                }
+            }
+            assert_ne!(u8::from(inv), 0, "Inverse not found for {}", i);
+        }
+    }
+
+    #[test]
     fn test_cantor_basis_properties() {
         let basis = CantorBasis11d::new();
 
-        // Check length: For GF(2^8), we expect a basis of 8 elements.
-        assert_eq!(basis.0.len(), 8, "Basis should have 8 elements for GF(2^8)");
+        assert_eq!(basis.0.len(), 8);
 
         // Check the Chain Property: v_i^2 + v_i = v_{i-1}
         for i in 1..basis.0.len() {
@@ -73,7 +109,7 @@ mod tests {
             assert_eq!(lhs, v_prev, "Chain property failed at index {}", i);
         }
 
-        // Check Trace Conditions
+        // Check trace conditions
         // For the sequence to be extendable, Tr(v_i) must be 0 for i < 7.
         for i in 0..7 {
             assert!(
@@ -83,9 +119,6 @@ mod tests {
             );
         }
 
-        // Check Linear Independence
-        // We verify that the 8 elements are linearly independent over GF(2)
-        // by checking if they can be reduced to an identity matrix (Rank 8).
         assert!(
             is_linearly_independent(&basis),
             "Basis elements are not linearly independent"
@@ -118,5 +151,16 @@ mod tests {
             }
         }
         rank == basis.0.len()
+    }
+
+    #[test]
+    fn basis_subspace_points() {
+        let basis = CantorBasis11d::new();
+        let elements: Vec<Gf2p8_11d> = basis.into_iter().collect();
+
+        assert_eq!(u8::from(basis.get_subspace_point(0)), 0);
+        assert_eq!(basis.get_subspace_point(1), elements[7]);
+        assert_eq!(basis.get_subspace_point(2), elements[6]);
+        assert_eq!(basis.get_subspace_point(4), elements[5]);
     }
 }

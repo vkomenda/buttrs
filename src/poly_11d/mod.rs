@@ -48,18 +48,59 @@ impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{encode, fft_recursive, gf2p8::Gf2p8, ifft_recursive, reconstruct_systematic};
+    use crate::{
+        encode, fft_recursive,
+        gf2p8::{CantorBasis, CantorBasis11d, Gf2p8},
+        ifft_recursive, reconstruct_systematic,
+    };
+
+    #[test]
+    fn mul_lut_correctness() {
+        let a: Gf2p8_11d = 0x42.into();
+        let b = 0x13.into();
+        let expected = a.mul(b);
+        let actual = a.mul_lut(b);
+
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn bit_matrix_correctness() {
         let a: Gf2p8_11d = 0x42.into();
         let b = 0x13.into();
-        let expected = a.mul_lut(b);
+        let expected = a.mul(b);
 
         let mat = a.into_bit_matrix();
         let actual = mat.apply(b.into());
 
         assert_eq!(actual, expected.into());
+    }
+
+    #[test]
+    fn verify_unique_points() {
+        let basis = CantorBasis11d::new();
+        let twiddles = basis.generate_lch_twiddle_tower::<256>();
+
+        println!("{twiddles:?}");
+
+        let mut shards = vec![vec![0u8; 1]; 256];
+        shards[1][0] = 1; // f(x) = x
+
+        let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut_slice()).collect();
+        fft_recursive(&mut refs, &twiddles);
+
+        println!("{shards:?}");
+
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..256 {
+            let val = shards[i][0];
+            assert!(
+                seen.insert(val),
+                "Duplicate point {} found at index {}!",
+                val,
+                i
+            );
+        }
     }
 
     #[test]
@@ -84,10 +125,10 @@ mod tests {
     #[test]
     fn fft_ifft_composition_identity() {
         let basis = CantorBasisLut11d::new();
-        let twiddles = &basis.twiddle_factors[3..];
+        let twiddles = &basis.twiddle_factors;
 
-        let mut original = vec![vec![0u8; 1]; 32];
-        for i in 0..32 {
+        let mut original = vec![vec![0u8; 1]; 128];
+        for i in 0..128 {
             original[i][0] = i as u8;
         }
 
@@ -105,10 +146,10 @@ mod tests {
 
     #[test]
     fn dual_subspace_identity() {
-        const N_DATA_SHARDS: usize = 16;
+        const N_DATA_SHARDS: usize = 128;
         const SHARD_LEN: usize = 8;
         let basis = CantorBasisLut11d::new();
-        let twiddles = &basis.twiddle_factors[3..];
+        let twiddles = &basis.twiddle_factors;
         let bridge_mat = twiddles[0];
         let recursive_twiddles = &twiddles[1..];
 
@@ -126,7 +167,7 @@ mod tests {
                 .iter_mut()
                 .map(|s| s.as_mut_slice())
                 .collect();
-            encode::<16, Gf2p8_11d>(&data_refs, &mut parity_refs, twiddles);
+            encode::<N_DATA_SHARDS, Gf2p8_11d>(&data_refs, &mut parity_refs, twiddles);
         }
 
         let mut manual_parity = data_shards.clone();

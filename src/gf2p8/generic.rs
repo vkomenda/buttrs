@@ -198,6 +198,32 @@ pub trait CantorBasis<G: Gf2p8>:
             (0..num_points).map(|i| self.get_subspace_point(i as u8)),
         )
     }
+
+    /// Generates the LCH Twiddle Tower for an N-point FFT.
+    fn generate_lch_twiddle_tower<const N: usize>(&self) -> Vec<BitMatrix> {
+        let k = N.trailing_zeros() as usize;
+
+        let mut current_basis: Vec<G> = self.into_iter().take(k).collect();
+        let mut twiddles = Vec::with_capacity(k);
+
+        // Build the tower from the bottom
+        for i in (0..k).rev() {
+            // The pivot for the current butterfly layer
+            let beta = current_basis[i];
+            twiddles.push(beta.into_bit_matrix());
+
+            // Transform the lower-level basis elements for the sub-FFTs.
+            // This is the "Subspace Polynomial" step: L(x) = x^2 + x*beta.
+            // It ensures that the sub-problems see unique points.
+            for j in 0..i {
+                let x = current_basis[j];
+                current_basis[j] = (x.mul(x)).add(x.mul(beta));
+            }
+        }
+
+        twiddles.reverse();
+        twiddles
+    }
 }
 
 /// Precomputed lookup table group operations.

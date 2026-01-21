@@ -8,13 +8,9 @@ impl BitMatrix {
     pub fn apply(&self, v: u8) -> u8 {
         let mut res = 0u8;
         for i in 0..8 {
-            let prod = v & self.0[i];
-            if !prod.count_ones().is_multiple_of(2) {
-                res |= 1 << i;
-            }
-            // if (v >> i) & 1 != 0 {
-            //     res ^= self.0[i];
-            // }
+            let bitmul = v & self.0[i];
+            let dotprod = bitmul.count_ones() & 1;
+            res |= (dotprod as u8) << i;
         }
         res
     }
@@ -60,5 +56,61 @@ impl BitMatrix {
             }
         }
         Some(Self(inv))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gf2p8::{Gf2p8, Gf2p8_11d};
+
+    #[test]
+    fn identity_matrix_apply() {
+        let id = BitMatrix([1, 2, 4, 8, 16, 32, 64, 128]);
+        for i in 0..=255 {
+            assert_eq!(id.apply(i), i, "Identity failed at {}", i);
+        }
+    }
+
+    // M(a ^ b) == M(a) ^ M(b)
+    #[test]
+    fn apply_linearity() {
+        let m = Gf2p8_11d::from(0x42).into_bit_matrix();
+        let a = 0x57;
+        let b = 0x83;
+
+        let res_combined = m.apply(a ^ b);
+        let res_separate = m.apply(a) ^ m.apply(b);
+
+        assert_eq!(res_combined, res_separate);
+    }
+
+    #[test]
+    fn double_transpose() {
+        let m = BitMatrix([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+        let mt = m.transpose();
+        let mtt = mt.transpose();
+
+        for i in 0..8 {
+            assert_eq!(m.0[i], mtt.0[i]);
+        }
+    }
+
+    #[test]
+    fn field_consistency() {
+        for a_val in [0x02, 0x42, 0x80, 0xFF] {
+            let a = Gf2p8_11d::from(a_val);
+            let matrix = a.into_bit_matrix();
+            for b_val in [0x01, 0x02, 0x55, 0xAA] {
+                let b = Gf2p8_11d::from(b_val);
+                let expected = u8::from(a.mul(b));
+                let actual = matrix.apply(b_val);
+                assert_eq!(
+                    actual, expected,
+                    "Matrix for {:#x} failed to multiply {:#x}. Expected {:#x}, got {:#x}",
+                    a_val, b_val, expected, actual
+                );
+            }
+        }
     }
 }
