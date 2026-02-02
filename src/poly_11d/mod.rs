@@ -43,6 +43,10 @@ impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
     fn get_subspace_point_lut(&self, i: u8) -> Gf2p8_11d {
         self.cantor_subspace[i as usize].into()
     }
+
+    fn eval_subspace_poly_lut(&self, k: usize, x: Gf2p8_11d) -> Gf2p8_11d {
+        todo!()
+    }
 }
 
 #[cfg(test)]
@@ -301,4 +305,82 @@ mod tests {
             assert_eq!(workspace[i], original_codeword[i]);
         }
     }
+
+    #[test]
+    fn span_eq_span_by_gray_code() {
+        let basis = CantorBasis11d::new();
+        for i in 0..9 {
+            let s1 = basis.span(i);
+            let s2 = basis.span_by_gray_code(i);
+            assert_eq!(s1, s2, "spans of dimension {i} differ");
+        }
+    }
+
+    fn unwrap_gfs<'a>(it: impl Iterator<Item = &'a Gf2p8_11d>) -> Vec<u8> {
+        it.map(|&x| u8::from(x)).collect()
+    }
+
+    #[test]
+    fn all_subspace_poly_luts() {
+        let basis = CantorBasis11d::new();
+        let incremental_luts: Vec<_> = (0..9).map(|k| basis.gen_subspace_poly_lut(k)).collect();
+        let all_luts = basis.gen_all_subspace_poly_luts();
+        for (k, &lut) in all_luts.iter().enumerate() {
+            println!("LUT {k}: {:?}", unwrap_gfs(lut.iter()));
+            assert_eq!(lut, incremental_luts[k]);
+        }
+
+        println!(
+            "Chain of subspaces: {:?}",
+            basis
+                .chain_of_subspaces()
+                .iter()
+                .map(|ss| unwrap_gfs(ss.iter()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn subspace_poly_luts_match_over_subspace_chain() {
+        let basis = CantorBasis11d::new();
+        let all_luts = basis.gen_all_subspace_poly_luts();
+        let subspace_chain = basis.chain_of_subspaces();
+        for (lut, ss) in all_luts.iter().zip(subspace_chain.iter()) {
+            for (x, &p) in lut.iter().enumerate() {
+                let gf_x: Gf2p8_11d = (x as u8).into();
+                let mut prod: Gf2p8_11d = 1u8.into();
+                for &a in ss {
+                    prod = prod.mul(gf_x.add(a));
+                }
+                assert_eq!(p, prod);
+            }
+        }
+    }
+
+    // #[test]
+    // fn all_compact_subspace_poly_luts() {
+    //     let basis = CantorBasis11d::new();
+    //     let print_lut = |k, it| {
+    //         println!("{k}-th compact LUT: {:?}", unwrap_gfs(it));
+    //     };
+    //     let lut0 = basis.gen_compact_subspace_poly_lut::<256>();
+    //     let lut1 = basis.gen_compact_subspace_poly_lut::<128>();
+    //     let lut2 = basis.gen_compact_subspace_poly_lut::<64>();
+    //     let lut3 = basis.gen_compact_subspace_poly_lut::<32>();
+    //     let lut4 = basis.gen_compact_subspace_poly_lut::<16>();
+    //     let lut5 = basis.gen_compact_subspace_poly_lut::<8>();
+    //     let lut6 = basis.gen_compact_subspace_poly_lut::<4>();
+    //     let lut7 = basis.gen_compact_subspace_poly_lut::<2>();
+    //     let lut8 = basis.gen_compact_subspace_poly_lut::<1>();
+
+    //     print_lut(0, lut0.iter());
+    //     print_lut(1, lut1.iter());
+    //     print_lut(2, lut2.iter());
+    //     print_lut(3, lut3.iter());
+    //     print_lut(4, lut4.iter());
+    //     print_lut(5, lut5.iter());
+    //     print_lut(6, lut6.iter());
+    //     print_lut(7, lut7.iter());
+    //     print_lut(8, lut8.iter());
+    // }
 }

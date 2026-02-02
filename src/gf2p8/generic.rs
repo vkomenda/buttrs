@@ -126,7 +126,7 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
 }
 
 pub trait CantorBasis<G: Gf2p8>:
-    Sized + Copy + Clone + FromIterator<G> + IntoIterator<Item = G>
+    Sized + Copy + Clone + FromIterator<G> + IntoIterator<Item = G> + AsRef<[G]>
 {
     fn new() -> Self {
         let mut basis = Vec::new();
@@ -224,6 +224,145 @@ pub trait CantorBasis<G: Gf2p8>:
         twiddles.reverse();
         twiddles
     }
+
+    fn eval_subspace_poly(&self, k: usize, x: G) -> G {
+        let mut val: G = 1.into();
+        for a in self.span(k) {
+            let sum = x.add(a);
+            val = val.mul(sum);
+        }
+        val
+    }
+
+    fn chain_of_subspaces(&self) -> Vec<Vec<G>> {
+        (0..9).map(|k| self.span(k)).collect()
+    }
+
+    fn span(&self, k: usize) -> Vec<G> {
+        let size = 1 << k;
+        let mut res = Vec::with_capacity(size);
+        for i in 0..size {
+            let mut sum: G = 0.into();
+            for (j, v) in self.into_iter().take(k).enumerate() {
+                if (i >> j) & 1 == 1 {
+                    sum = sum.add(v);
+                }
+            }
+            res.push(sum);
+        }
+        res
+    }
+
+    fn span_by_gray_code(&self, k: usize) -> Vec<G> {
+        let size = 1 << k;
+        let mut span: Vec<G> = vec![0u8.into(); size];
+        for i in 1..size {
+            let lsb = i.trailing_zeros() as usize;
+            span[i] = span[i ^ (1 << lsb)].add(self.as_ref()[lsb]);
+        }
+        span
+    }
+
+    // FIXME: Broken!
+    //
+    // /// Generates the compact LUT for the subspace polynomial s_k(x).
+    // /// The const K is the table size 2^(8-k). the level index k is derived as 8 - log2(K).
+    // fn gen_compact_subspace_poly_lut<const K: usize>(&self) -> [G; K] {
+    //     let log2_k = K.trailing_zeros() as usize;
+    //     let k = 8 - log2_k;
+
+    //     let mut table = [0u8.into(); K];
+    //     let basis = self.as_ref();
+
+    //     // Pre-compute projections b_l = s_l(v_l) for l < k.
+    //     // These are the basis point projections required to evaluate s_k.
+    //     let mut basis_image = [G::from(0u8); 8];
+    //     let mut w = basis.to_vec();
+    //     for l in 0..k {
+    //         let b_l = w[l];
+    //         basis_image[l] = b_l;
+    //         for w_j in w.iter_mut().take(k).skip(l + 1) {
+    //             // s_{l+1}(v_j) = s_l(v_j) * (s_l(v_j) + s_l(v_l))
+    //             *w_j = w_j.mul(w_j.add(b_l));
+    //         }
+    //     }
+
+    //     // Compute s_k(X_{r << k}) for all r in the compressed range.
+    //     for r in 0..K {
+    //         // We evaluate s_k only at coset representatives of the subspace V_k.
+    //         // These are points where the lower k bits are zero.
+    //         let mut val = self.get_subspace_point((r << k) as u8);
+
+    //         // Apply the chain of subspace polynomials s_0 -> s_1 -> ... -> s_k
+    //         for &b_l in basis_image.iter().take(k) {
+    //             val = val.mul(val.add(b_l));
+    //         }
+    //         table[r] = val;
+    //     }
+
+    //     table
+    // }
+
+    /// Generates a LUT for the subspace polynomial s_k(x).
+    /// The table index is the field element (as u8), and the value is s_k(index).
+    /// s_0(x) = x
+    /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
+    fn gen_subspace_poly_lut(&self, k: usize) -> [G; FIELD_SIZE] {
+        let mut table = [0u8.into(); FIELD_SIZE];
+
+        // Base case: s_0(x) = x
+        for x in 0..FIELD_SIZE {
+            table[x] = G::from(x as u8);
+        }
+
+        let basis = self.as_ref();
+        // We only need to iterate if k > 0
+        for v_j in basis.iter().take(k) {
+            // b_j = s_j(v_j)
+            // To find this, we evaluate the current state of s_j at point v_j.
+            // Since our table currently holds s_j(x) for all x,
+            // we just look up the index corresponding to basis element v_j.
+            let b_j = table[(*v_j).into_usize()];
+
+            // Update the table: s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
+            for x in table.iter_mut() {
+                let s_j_x = *x;
+                *x = s_j_x.mul(s_j_x.add(b_j));
+            }
+        }
+
+        table
+    }
+
+    /// Generates all subspace polynomial LUTs from s_0 to s_8.
+    /// Returns an array where [j][x] contains s_j(x).
+    /// s_0(x) = x
+    /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
+    fn gen_all_subspace_poly_luts(&self) -> [[G; 256]; 9] {
+        let mut luts = [[0u8.into(); 256]; 9];
+
+        // 1. Initialize s_0(x) = x
+        for (x, s_0_x) in luts[0].iter_mut().enumerate() {
+            *s_0_x = G::from(x as u8);
+        }
+
+        let basis = self.as_ref();
+
+        // 2. Iteratively compute s_{j+1} from s_j
+        for j in 0..8 {
+            // b_j is the basis projection: s_j(v_j)
+            // We look up the basis element v_j in the current s_j table
+            let b_j = luts[j][basis[j].into_usize()];
+
+            for x in 0..256 {
+                let s_j_x = luts[j][x];
+                // s_{j+1}(x) = s_j(x) * (s_j(x) + b_j)
+                luts[j + 1][x] = s_j_x.mul(s_j_x.add(b_j));
+            }
+        }
+
+        luts
+    }
 }
 
 /// Precomputed lookup table group operations.
@@ -268,6 +407,39 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         eval
     }
 
-    /// Returns the i-th point in the basis subspace.
+    /// Returns the i-th point $s_i(v_i)$ in the basis subspace.
     fn get_subspace_point_lut(&self, i: u8) -> G;
+
+    fn eval_subspace_poly_lut(&self, k: usize, x: G) -> G;
+
+    /// A basis of the algebraic ring $F_{2^m}[x]/(x^{2^m}-x)$ which forms the evaluation space.
+    fn compute_evaluation_space_basis_point(&self, i: u8, x: G) -> G {
+        let m = 8;
+        let mut result: G = 1u8.into();
+        let mut s_j_x = x;
+
+        for j in 0..m {
+            let b_j = self.eval_subspace_poly_lut(j, x);
+
+            if (i >> j) & 1 == 1 {
+                let term = s_j_x.mul_lut(b_j.inv_lut());
+                result = result.mul_lut(term);
+            }
+
+            // Update s_j_x to s_{j+1}_x by recursion:
+            // s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
+            s_j_x = s_j_x.mul_lut(s_j_x.add(b_j));
+        }
+
+        result
+    }
+}
+
+/// The Lin-Chung-Han basis
+pub trait LchBasis<G: Gf2p8>:
+    Sized + Copy + Clone + FromIterator<G> + IntoIterator<Item = G> + AsRef<[G]>
+{
+    fn from_cantor_basis(basis: impl CantorBasis<G>) -> Self {
+        todo!()
+    }
 }

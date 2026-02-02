@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-fn write_points<G>(f: &mut File, it: impl Iterator<Item = G>)
+fn write_points<G>(f: &mut File, it: impl Iterator<Item = G>, is_subarray: bool)
 where
     u8: From<G>,
 {
@@ -20,7 +20,12 @@ where
         }
         write!(f, "0x{:02x}, ", u8::from(point)).unwrap();
     }
-    writeln!(f, "\n];").unwrap();
+    write!(f, "\n]").unwrap();
+    if is_subarray {
+        writeln!(f, ",").unwrap();
+    } else {
+        writeln!(f, ";").unwrap();
+    }
 }
 
 fn main() {
@@ -33,11 +38,11 @@ fn main() {
     let (exp_table, log_table) = Gf2p8_11d::exp_log_tables();
     let inv_table = Gf2p8_11d::inv_table(&exp_table, &log_table);
     write!(f, "\npub const EXP_TABLE: [u8; {}] = [", EXP_TABLE_SIZE).unwrap();
-    write_points(&mut f, exp_table.into_iter());
+    write_points(&mut f, exp_table.into_iter(), false);
     write!(f, "\npub const LOG_TABLE: [u8; {}] = [", FIELD_SIZE).unwrap();
-    write_points(&mut f, log_table.into_iter());
+    write_points(&mut f, log_table.into_iter(), false);
     write!(f, "\npub const INV_TABLE: [u8; {}] = [", FIELD_SIZE).unwrap();
-    write_points(&mut f, inv_table.into_iter());
+    write_points(&mut f, inv_table.into_iter(), false);
 
     let basis = CantorBasis11d::new();
     let mut twiddles = basis.into_fft_twiddle_matrices();
@@ -62,7 +67,16 @@ fn main() {
     let (num_points, points_iter) = basis.iter_subspace_points();
 
     write!(f, "\npub const CANTOR_SUBSPACE: [u8; {}] = [", num_points).unwrap();
-    write_points(&mut f, points_iter);
+    write_points(&mut f, points_iter, false);
+
+    let sub_poly_luts = basis.gen_all_subspace_poly_luts();
+
+    writeln!(f, "\npub const SUBSPACE_POLY_VALUES: [[u8; 256]; 9] = [",).unwrap();
+    for lut in sub_poly_luts {
+        write!(f, "[").unwrap();
+        write_points(&mut f, lut.into_iter(), true);
+    }
+    writeln!(f, "];").unwrap();
 
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/gf2p8/mod.rs");

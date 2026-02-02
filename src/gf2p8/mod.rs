@@ -47,6 +47,12 @@ impl IntoIterator for CantorBasis11d {
 
 impl CantorBasis<Gf2p8_11d> for CantorBasis11d {}
 
+impl AsRef<[Gf2p8_11d]> for CantorBasis11d {
+    fn as_ref(&self) -> &[Gf2p8_11d] {
+        self.0.as_ref()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
