@@ -225,9 +225,9 @@ pub trait CantorBasis<G: Gf2p8>:
         twiddles
     }
 
-    fn eval_subspace_poly(&self, k: usize, x: G) -> G {
+    fn eval_subspace_poly(&self, k: u8, x: G) -> G {
         let mut val: G = 1.into();
-        for a in self.span(k) {
+        for a in self.span_by_gray_code(k) {
             let sum = x.add(a);
             val = val.mul(sum);
         }
@@ -238,12 +238,12 @@ pub trait CantorBasis<G: Gf2p8>:
         (0..9).map(|k| self.span(k)).collect()
     }
 
-    fn span(&self, k: usize) -> Vec<G> {
+    fn span(&self, k: u8) -> Vec<G> {
         let size = 1 << k;
         let mut res = Vec::with_capacity(size);
         for i in 0..size {
             let mut sum: G = 0.into();
-            for (j, v) in self.into_iter().take(k).enumerate() {
+            for (j, v) in self.into_iter().take(k as usize).enumerate() {
                 if (i >> j) & 1 == 1 {
                     sum = sum.add(v);
                 }
@@ -253,7 +253,7 @@ pub trait CantorBasis<G: Gf2p8>:
         res
     }
 
-    fn span_by_gray_code(&self, k: usize) -> Vec<G> {
+    fn span_by_gray_code(&self, k: u8) -> Vec<G> {
         let size = 1 << k;
         let mut span: Vec<G> = vec![0u8.into(); size];
         for i in 1..size {
@@ -338,8 +338,8 @@ pub trait CantorBasis<G: Gf2p8>:
     /// Returns an array where [j][x] contains s_j(x).
     /// s_0(x) = x
     /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
-    fn gen_all_subspace_poly_luts(&self) -> [[G; 256]; 9] {
-        let mut luts = [[0u8.into(); 256]; 9];
+    fn gen_all_subspace_poly_luts(&self) -> [[G; FIELD_SIZE]; 9] {
+        let mut luts = [[0u8.into(); FIELD_SIZE]; 9];
 
         // 1. Initialize s_0(x) = x
         for (x, s_0_x) in luts[0].iter_mut().enumerate() {
@@ -354,7 +354,7 @@ pub trait CantorBasis<G: Gf2p8>:
             // We look up the basis element v_j in the current s_j table
             let b_j = luts[j][basis[j].into_usize()];
 
-            for x in 0..256 {
+            for x in 0..FIELD_SIZE {
                 let s_j_x = luts[j][x];
                 // s_{j+1}(x) = s_j(x) * (s_j(x) + b_j)
                 luts[j + 1][x] = s_j_x.mul(s_j_x.add(b_j));
@@ -362,6 +362,31 @@ pub trait CantorBasis<G: Gf2p8>:
         }
 
         luts
+    }
+
+    /// Generates 1/p_i values, for 0 <= i < 256.
+    fn gen_normalization_factors(
+        &self,
+        subspace_poly_luts: &[[G; FIELD_SIZE]; 9],
+        inv_lut: &[u8; FIELD_SIZE],
+    ) -> [u8; FIELD_SIZE] {
+        let basis = self.as_ref();
+        let basis_image: Vec<G> = (0..8)
+            .map(|i| subspace_poly_luts[i][basis[i].into_usize()])
+            .collect();
+        let mut factors = [0u8; FIELD_SIZE];
+
+        for (i, f) in factors.iter_mut().enumerate() {
+            let mut p: G = 1u8.into();
+            for (j, &b) in basis_image.iter().enumerate() {
+                if (i >> j) & 1 == 1 {
+                    p = p.mul(b);
+                }
+            }
+            *f = inv_lut[p.into_usize()];
+        }
+
+        factors
     }
 }
 
@@ -436,10 +461,21 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 }
 
 /// The Lin-Chung-Han basis
-pub trait LchBasis<G: Gf2p8>:
-    Sized + Copy + Clone + FromIterator<G> + IntoIterator<Item = G> + AsRef<[G]>
-{
-    fn from_cantor_basis(basis: impl CantorBasis<G>) -> Self {
-        todo!()
+pub trait LchBasisLut<G: Gf2p8Lut> {
+    fn eval_subspace_poly_lut(&self, k: u8, x: G) -> G;
+
+    /// Evaluate the i-th LCH basis polynomial at point x.  The default implementation assumes a
+    /// Cantor basis in the evaluation domain, which doesn't require a normalization factor.
+    fn eval_lch_basis_poly(&self, i: u8, x: G) -> G {
+        let mut result: G = 1u8.into();
+
+        for j in 0u8..8 {
+            if (i >> j) & 1 == 1 {
+                let s_j_x = self.eval_subspace_poly_lut(j, x);
+                result = result.mul(s_j_x);
+            }
+        }
+
+        result
     }
 }

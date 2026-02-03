@@ -10,21 +10,23 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-fn write_points<G>(f: &mut File, it: impl Iterator<Item = G>, is_subarray: bool)
+fn write_points<G>(f: &mut File, it: impl Iterator<Item = G>, has_subarrays: bool)
 where
     u8: From<G>,
 {
     for (i, point) in it.enumerate() {
         if i % 16 == 0 {
             write!(f, "\n    ").unwrap();
+            if has_subarrays {
+                write!(f, "    ").unwrap();
+            }
         }
         write!(f, "0x{:02x}, ", u8::from(point)).unwrap();
     }
-    write!(f, "\n]").unwrap();
-    if is_subarray {
-        writeln!(f, ",").unwrap();
+    if has_subarrays {
+        writeln!(f, "\n    ],").unwrap();
     } else {
-        writeln!(f, ";").unwrap();
+        writeln!(f, "\n];").unwrap();
     }
 }
 
@@ -73,7 +75,7 @@ fn main() {
 
     writeln!(f, "\npub const SUBSPACE_POLY_VALUES: [[u8; 256]; 9] = [",).unwrap();
     for lut in sub_poly_luts {
-        write!(f, "[").unwrap();
+        write!(f, "    [").unwrap();
         write_points(&mut f, lut.into_iter(), true);
     }
     writeln!(f, "];").unwrap();

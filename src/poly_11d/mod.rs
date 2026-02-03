@@ -1,7 +1,7 @@
 use crate::gf2p8::{
-    Gf2p8_11d,
+    Gf2p8, Gf2p8_11d,
     bit_matrix::BitMatrix,
-    generic::{CantorBasisLut, Gf2p8Lut},
+    generic::{CantorBasisLut, Gf2p8Lut, LchBasisLut},
 };
 
 pub mod generated {
@@ -46,6 +46,14 @@ impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
 
     fn eval_subspace_poly_lut(&self, k: usize, x: Gf2p8_11d) -> Gf2p8_11d {
         todo!()
+    }
+}
+
+pub struct LchBasisLut11d;
+
+impl LchBasisLut<Gf2p8_11d> for LchBasisLut11d {
+    fn eval_subspace_poly_lut(&self, k: u8, x: Gf2p8_11d) -> Gf2p8_11d {
+        generated::SUBSPACE_POLY_VALUES[k as usize][x.into_usize()].into()
     }
 }
 
@@ -383,4 +391,12 @@ mod tests {
     //     print_lut(7, lut7.iter());
     //     print_lut(8, lut8.iter());
     // }
+
+    #[test]
+    fn normalization_factors_id() {
+        let basis = CantorBasis11d::new();
+        let subpoly_luts = basis.gen_all_subspace_poly_luts();
+        let norm_factors = basis.gen_normalization_factors(&subpoly_luts, &generated::INV_TABLE);
+        assert_eq!(norm_factors, [1u8; 256]);
+    }
 }
