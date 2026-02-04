@@ -465,7 +465,8 @@ pub trait LchBasisLut<G: Gf2p8Lut> {
     fn eval_subspace_poly_lut(&self, k: u8, x: G) -> G;
 
     /// Evaluate the i-th LCH basis polynomial at point x.  The default implementation assumes a
-    /// Cantor basis in the evaluation domain, which doesn't require a normalization factor.
+    /// Cantor basis in the evaluation domain, which doesn't require scaling terms by a
+    /// normalization factor.
     fn eval_lch_basis_poly(&self, i: u8, x: G) -> G {
         let mut result: G = 1u8.into();
 
@@ -474,6 +475,20 @@ pub trait LchBasisLut<G: Gf2p8Lut> {
                 let s_j_x = self.eval_subspace_poly_lut(j, x);
                 result = result.mul(s_j_x);
             }
+        }
+
+        result
+    }
+
+    /// $\overline{D}_h (x)$
+    fn eval_transform_domain_poly(&self, coeffs: &[G], x: G) -> G {
+        // debug_assert!((0..=8).any(|k| coeffs.len() == 2usize.pow(k) - 1));
+        // let k = coeffs.len().trailing_zeros() as usize;
+        let mut result: G = 0u8.into();
+
+        for (i, d) in coeffs.iter().enumerate() {
+            let term = d.mul(self.eval_lch_basis_poly(i as u8, x));
+            result = result.add(term);
         }
 
         result
