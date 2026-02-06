@@ -25,12 +25,12 @@ impl Gf2p8Lut for Gf2p8_11d {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct CantorBasisLut11d {
+pub struct BasesLut11d {
     twiddle_factors: &'static [BitMatrix],
     cantor_subspace: &'static [u8],
 }
 
-impl CantorBasisLut11d {
+impl BasesLut11d {
     pub fn new() -> Self {
         Self {
             twiddle_factors: &generated::TWIDDLE_FACTORS,
@@ -39,23 +39,21 @@ impl CantorBasisLut11d {
     }
 }
 
-impl CantorBasisLut<Gf2p8_11d> for CantorBasisLut11d {
+impl CantorBasisLut<Gf2p8_11d> for BasesLut11d {
+    fn get_basis_point_lut(&self, i: u8) -> Gf2p8_11d {
+        todo!()
+    }
+
     fn get_subspace_point_lut(&self, i: u8) -> Gf2p8_11d {
         self.cantor_subspace[i as usize].into()
     }
 
-    fn eval_subspace_poly_lut(&self, k: usize, x: Gf2p8_11d) -> Gf2p8_11d {
-        todo!()
-    }
-}
-
-pub struct LchBasisLut11d;
-
-impl LchBasisLut<Gf2p8_11d> for LchBasisLut11d {
     fn eval_subspace_poly_lut(&self, k: u8, x: Gf2p8_11d) -> Gf2p8_11d {
         generated::SUBSPACE_POLY_VALUES[k as usize][x.into_usize()].into()
     }
 }
+
+impl LchBasisLut<Gf2p8_11d> for BasesLut11d {}
 
 #[cfg(test)]
 mod tests {
@@ -150,7 +148,7 @@ mod tests {
 
     #[test]
     fn fft_ifft_composition_identity() {
-        let basis = CantorBasisLut11d::new();
+        let basis = BasesLut11d::new();
         let twiddles = &basis.twiddle_factors;
 
         let mut original = vec![vec![0u8; 1]; 128];
@@ -174,7 +172,7 @@ mod tests {
     fn dual_subspace_identity() {
         const N_DATA_SHARDS: usize = 128;
         const SHARD_LEN: usize = 8;
-        let basis = CantorBasisLut11d::new();
+        let basis = BasesLut11d::new();
         let twiddles = &basis.twiddle_factors;
         let bridge_mat = twiddles[0];
         let recursive_twiddles = &twiddles[1..];
@@ -220,7 +218,7 @@ mod tests {
 
     /// Helper to create a 64-shard codeword (32 data, 32 parity)
     fn generate_test_codeword(shard_len: usize) -> Vec<Vec<u8>> {
-        let basis = CantorBasisLut11d::new();
+        let basis = BasesLut11d::new();
         let twiddles = &basis.twiddle_factors[2..];
 
         // Create 32 data shards with distinct patterns
@@ -249,7 +247,7 @@ mod tests {
     fn reconstruct_success_max_erasures() {
         let shard_len = 64;
         let original_codeword = generate_test_codeword(shard_len);
-        let basis = CantorBasisLut11d::new();
+        let basis = BasesLut11d::new();
         let twiddles = &basis.twiddle_factors[2..];
 
         // Simulate receiving exactly 32 shards (0..16 data and 32..48 parity)
@@ -291,7 +289,7 @@ mod tests {
     fn reconstruct_no_erasures() {
         let shard_len = 8;
         let original_codeword = generate_test_codeword(shard_len);
-        let basis = CantorBasisLut11d::new();
+        let basis = BasesLut11d::new();
         let twiddles = &basis.twiddle_factors[2..];
 
         let mut received = Vec::new();

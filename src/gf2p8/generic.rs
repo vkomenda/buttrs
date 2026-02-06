@@ -416,6 +416,8 @@ pub trait Gf2p8Lut: Gf2p8 {
 
 /// Precompted lookup table operations on the Cantor basis subspace.
 pub trait CantorBasisLut<G: Gf2p8Lut> {
+    fn get_basis_point_lut(&self, i: u8) -> G;
+
     /// Evaluates the erasure locator polynomial E(x) at point alpha_i.
     /// E(x) = product over missing indices j of (x ^ alpha_j).
     fn eval_erasure_locator_poly_lut(&self, i: u8, erased_indices: &[u8]) -> G {
@@ -435,7 +437,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     /// Returns the i-th point $s_i(v_i)$ in the basis subspace.
     fn get_subspace_point_lut(&self, i: u8) -> G;
 
-    fn eval_subspace_poly_lut(&self, k: usize, x: G) -> G;
+    fn eval_subspace_poly_lut(&self, k: u8, x: G) -> G;
 
     /// A basis of the algebraic ring $F_{2^m}[x]/(x^{2^m}-x)$ which forms the evaluation space.
     fn compute_evaluation_space_basis_point(&self, i: u8, x: G) -> G {
@@ -461,9 +463,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 }
 
 /// The Lin-Chung-Han basis
-pub trait LchBasisLut<G: Gf2p8Lut> {
-    fn eval_subspace_poly_lut(&self, k: u8, x: G) -> G;
-
+pub trait LchBasisLut<G: Gf2p8Lut>: CantorBasisLut<G> {
     /// Evaluate the i-th LCH basis polynomial at point x.  The default implementation assumes a
     /// Cantor basis in the evaluation domain, which doesn't require scaling terms by a
     /// normalization factor.
@@ -492,5 +492,44 @@ pub trait LchBasisLut<G: Gf2p8Lut> {
         }
 
         result
+    }
+}
+
+pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
+    /// Algorithm 1 in LCH paper.
+    fn fft(&self, coeffs: &mut [G], k: u8, beta: G) {
+        if k == 0 {
+            return;
+        }
+
+        let n = 1 << k;
+        let half = 1 << (k - 1);
+
+        // Fetch the twiddle factor T = s_{k-1}(beta)
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+
+        // Butterfly stage (line 3-6)
+        for i in 0..half {
+            let d_i = coeffs[i];
+            let d_i_half = coeffs[i + half];
+
+            // g_i_0 = d_i + T * d_{i+half}
+            let g_i_0 = d_i.add(twiddle.mul(d_i_half));
+
+            // g_i_1 = g_i_0 + d_{i+half}
+            // This is equivalent to d_i + (T + 1) * d_{i+half}
+            let g_i_1 = g_i_0.add(d_i_half);
+
+            coeffs[i] = g_i_0;
+            coeffs[i + half] = g_i_1;
+        }
+
+        // 4. Recursive Calls (Line 7-8)
+        // Left branch: FFT(g_0, k-1, beta)
+        self.fft(&mut coeffs[..half], k - 1, beta);
+
+        // Right branch: FFT(g_1, k-1, v_{k-1} + beta)
+        let next_beta = beta.add(self.get_basis_point_lut(k - 1));
+        self.fft(&mut coeffs[half..], k - 1, next_beta);
     }
 }
