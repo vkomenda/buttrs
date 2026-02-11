@@ -47,6 +47,10 @@ fn main() {
     write_points(&mut f, inv_table.into_iter(), false);
 
     let basis = CantorBasis11d::new();
+
+    write!(f, "\npub const CANTOR_BASIS: [u8; 8] = [").unwrap();
+    write_points(&mut f, basis.into_iter(), false);
+
     let mut twiddles = basis.into_fft_twiddle_matrices();
     // Reverse the twiddle factors in storage. They need to come in rev order at run time.
     twiddles.reverse();

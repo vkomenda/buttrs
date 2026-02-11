@@ -502,7 +502,6 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
             return;
         }
 
-        let n = 1 << k;
         let half = 1 << (k - 1);
 
         // Fetch the twiddle factor T = s_{k-1}(beta)
@@ -524,12 +523,38 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
             coeffs[i + half] = g_i_1;
         }
 
-        // 4. Recursive Calls (Line 7-8)
+        // Recursive calls (line 7-8)
         // Left branch: FFT(g_0, k-1, beta)
         self.fft(&mut coeffs[..half], k - 1, beta);
 
         // Right branch: FFT(g_1, k-1, v_{k-1} + beta)
         let next_beta = beta.add(self.get_basis_point_lut(k - 1));
         self.fft(&mut coeffs[half..], k - 1, next_beta);
+    }
+
+    fn ifft(&self, evals: &mut [G], k: u8, beta: G) {
+        if k == 0 {
+            return;
+        }
+
+        let half = 1 << (k - 1);
+
+        self.ifft(&mut evals[..half], k - 1, beta);
+
+        let next_beta = beta.add(self.get_basis_point_lut(k - 1));
+        self.ifft(&mut evals[half..], k - 1, next_beta);
+
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+
+        for i in 0..half {
+            let g_i_0 = evals[i];
+            let g_i_1 = evals[i + half];
+
+            let d_i_half = g_i_0.add(g_i_1);
+            let d_i = g_i_0.add(twiddle.mul(d_i_half));
+
+            evals[i] = d_i;
+            evals[i + half] = d_i_half;
+        }
     }
 }

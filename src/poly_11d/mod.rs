@@ -1,7 +1,7 @@
 use crate::gf2p8::{
     Gf2p8, Gf2p8_11d,
     bit_matrix::BitMatrix,
-    generic::{CantorBasisLut, Gf2p8Lut, LchBasisLut},
+    generic::{CantorBasisLut, Fft, Gf2p8Lut, LchBasisLut},
 };
 
 pub mod generated {
@@ -27,25 +27,25 @@ impl Gf2p8Lut for Gf2p8_11d {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BasesLut11d {
     twiddle_factors: &'static [BitMatrix],
-    cantor_subspace: &'static [u8],
 }
 
 impl BasesLut11d {
     pub fn new() -> Self {
         Self {
             twiddle_factors: &generated::TWIDDLE_FACTORS,
-            cantor_subspace: &generated::CANTOR_SUBSPACE,
         }
     }
 }
 
+impl Fft<Gf2p8_11d> for BasesLut11d {}
+
 impl CantorBasisLut<Gf2p8_11d> for BasesLut11d {
     fn get_basis_point_lut(&self, i: u8) -> Gf2p8_11d {
-        todo!()
+        generated::CANTOR_BASIS[i as usize].into()
     }
 
     fn get_subspace_point_lut(&self, i: u8) -> Gf2p8_11d {
-        self.cantor_subspace[i as usize].into()
+        generated::CANTOR_SUBSPACE[i as usize].into()
     }
 
     fn eval_subspace_poly_lut(&self, k: u8, x: Gf2p8_11d) -> Gf2p8_11d {
@@ -396,5 +396,33 @@ mod tests {
         let subpoly_luts = basis.gen_all_subspace_poly_luts();
         let norm_factors = basis.gen_normalization_factors(&subpoly_luts, &generated::INV_TABLE);
         assert_eq!(norm_factors, [1u8; 256]);
+    }
+
+    #[test]
+    fn fft_ifft_id() {
+        let bases = BasesLut11d::new();
+        let mut data = [0u8.into(); 256];
+
+        // 1. Fill with "random" test data
+        for i in 0..128 {
+            data[i] = Gf2p8_11d::from(i as u8);
+        }
+        let original = data;
+
+        // k=8 for 256 points, beta=0 for the standard subspace V_8
+        bases.fft(&mut data, 8, 0u8.into());
+
+        println!("FFT result: {:?}", unwrap_gfs(data.iter()));
+        assert_ne!(data, original, "FFT should have transformed the data");
+
+        bases.ifft(&mut data, 8, 0u8.into());
+
+        for i in 0..256 {
+            assert_eq!(
+                data[i], original[i],
+                "IFFT failed to recover coefficient at index {}",
+                i
+            );
+        }
     }
 }
