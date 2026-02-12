@@ -580,8 +580,8 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
             }
         }
 
-        self.ifft_sharded(left, k - 1, beta);
-        self.ifft_sharded(right, k - 1, beta.add(self.get_basis_point_lut(k - 1)));
+        self.fft_sharded(left, k - 1, beta);
+        self.fft_sharded(right, k - 1, beta.add(self.get_basis_point_lut(k - 1)));
     }
 
     fn ifft_sharded(&self, shards: &mut [&mut [u8]], k: u8, beta: G) {
