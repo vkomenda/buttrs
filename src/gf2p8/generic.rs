@@ -532,6 +532,7 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         self.fft(&mut coeffs[half..], k - 1, next_beta);
     }
 
+    /// Algorithm 2 in LCH paper.
     fn ifft(&self, evals: &mut [G], k: u8, beta: G) {
         if k == 0 {
             return;
@@ -556,5 +557,73 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
             evals[i] = d_i;
             evals[i + half] = d_i_half;
         }
+    }
+
+    fn fft_sharded(&self, shards: &mut [&mut [u8]], k: u8, beta: G) {
+        if k == 0 {
+            return;
+        }
+        let half = 1 << (k - 1);
+
+        let (left, right) = shards.split_at_mut(half);
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+
+        for i in 0..half {
+            let (s_i, s_i_half) = (&mut left[i], &mut right[i]);
+            for (byte_l, byte_r) in s_i.iter_mut().zip(s_i_half.iter_mut()) {
+                let d_i = G::from(*byte_l);
+                let d_i_half = G::from(*byte_r);
+                let g_i_0 = d_i.add(twiddle.mul(d_i_half));
+                let g_i_1 = g_i_0.add(d_i_half);
+                *byte_l = g_i_0.into();
+                *byte_r = g_i_1.into();
+            }
+        }
+
+        self.ifft_sharded(left, k - 1, beta);
+        self.ifft_sharded(right, k - 1, beta.add(self.get_basis_point_lut(k - 1)));
+    }
+
+    fn ifft_sharded(&self, shards: &mut [&mut [u8]], k: u8, beta: G) {
+        if k == 0 {
+            return;
+        }
+        let half = 1 << (k - 1);
+
+        let (left, right) = shards.split_at_mut(half);
+        self.ifft_sharded(left, k - 1, beta);
+        self.ifft_sharded(right, k - 1, beta.add(self.get_basis_point_lut(k - 1)));
+
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+
+        for i in 0..half {
+            let (s_i, s_i_half) = (&mut left[i], &mut right[i]);
+            for (byte_l, byte_r) in s_i.iter_mut().zip(s_i_half.iter_mut()) {
+                let g_i_0 = G::from(*byte_l);
+                let g_i_1 = G::from(*byte_r);
+                let d_i_half = g_i_0.add(g_i_1);
+                let d_i = g_i_0.add(twiddle.mul(d_i_half));
+                *byte_l = d_i.into();
+                *byte_r = d_i_half.into();
+            }
+        }
+    }
+
+    /// Systematic Reed-Solomon encoding: The message stays the same. Only parity is modified.
+    ///
+    /// This method is for the special case when the number of message shards equals the number of
+    /// parity shards, and is a power of 2.
+    fn encode_systematic(&self, message_shards: &[&[u8]], parity_shards: &mut [&mut [u8]]) {
+        let num_parity = parity_shards.len();
+        let log_num_parity = num_parity.trailing_zeros() as u8;
+
+        // TODO: this can be done by the caller, in which case only the mut buffer is required.
+        for (m_shard, p_shard) in message_shards.iter().zip(parity_shards.iter_mut()) {
+            p_shard.copy_from_slice(m_shard);
+        }
+
+        let beta = self.get_subspace_point_lut(num_parity as u8);
+        self.ifft_sharded(parity_shards, log_num_parity, beta);
+        self.fft_sharded(parity_shards, log_num_parity, 0u8.into());
     }
 }
