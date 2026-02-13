@@ -626,4 +626,63 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         self.ifft_sharded(parity_shards, log_num_parity, beta);
         self.fft_sharded(parity_shards, log_num_parity, 0u8.into());
     }
+
+    /// IFFT that reads from `msg` and XORs into `parity` (Accumulative IFFT).
+    // TODO: test
+    fn ifft_accumulate(&self, msg: &[&[u8]], parity: &mut [&mut [u8]], k: u8, beta: G) {
+        if k == 0 {
+            // Base case: XOR the message shard into the parity shard.
+            if let Some(m_shard) = msg.first() {
+                for (p_b, m_b) in parity[0].iter_mut().zip(m_shard.iter()) {
+                    *p_b ^= *m_b;
+                }
+            }
+            return;
+        }
+
+        let half = 1 << (k - 1);
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+
+        let (m_left, m_right) = if msg.len() > half {
+            msg.split_at(half)
+        } else {
+            (msg, &[][..])
+        };
+        let (p_left, p_right) = parity.split_at_mut(half);
+
+        self.ifft_accumulate(m_left, p_left, k - 1, beta);
+        let next_beta = beta.add(self.get_basis_point_lut(k - 1));
+        self.ifft_accumulate(m_right, p_right, k - 1, next_beta);
+
+        for i in 0..half {
+            let (p_i, p_i_half) = (&mut p_left[i], &mut p_right[i]);
+            for (byte_l, byte_r) in p_i.iter_mut().zip(p_i_half.iter_mut()) {
+                let g_0 = G::from(*byte_l);
+                let g_1 = G::from(*byte_r);
+
+                let d_i_half = g_0.add(g_1);
+                let d_i = g_0.add(twiddle.mul(d_i_half));
+
+                *byte_l = d_i.into();
+                *byte_r = d_i_half.into();
+            }
+        }
+    }
+
+    /// Syndrome computation. A version for the special case of equal number of message and parity
+    /// shards.
+    fn compute_syndrome(&self, received_shards: &[&[u8]], syndrome_shards: &mut [&mut [u8]]) {
+        let num_parity = syndrome_shards.len();
+        let log_num_parity = num_parity.trailing_zeros() as u8;
+
+        let (left, right) = received_shards.split_at(num_parity);
+
+        for (src, dst) in left.iter().zip(syndrome_shards.iter_mut()) {
+            dst.copy_from_slice(src);
+        }
+
+        self.ifft_sharded(syndrome_shards, log_num_parity, 0u8.into());
+        let basis_pt = self.get_basis_point_lut(log_num_parity);
+        self.ifft_accumulate(right, syndrome_shards, log_num_parity, basis_pt);
+    }
 }
