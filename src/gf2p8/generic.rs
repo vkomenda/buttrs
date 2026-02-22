@@ -7,6 +7,14 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
     const POLY: u16;
     const PRIM_ELEM: Self;
 
+    fn zero() -> Self {
+        0u8.into()
+    }
+
+    fn one() -> Self {
+        1u8.into()
+    }
+
     fn add(self, other: Self) -> Self {
         Self::from(self.into() ^ other.into())
     }
@@ -73,11 +81,11 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
     ///
     /// 0 has no inverse. It is preserved in the output, so the case of 0 needs to be covered with checks.
     fn iter_inverses() -> impl Iterator<Item = Self> {
-        std::iter::once(0u8.into()).chain((1u8..=255).map(|a| {
+        std::iter::once(Self::zero()).chain((1u8..=255).map(|a| {
             let gf_a: Self = a.into();
             for b in 1u8..=255 {
                 let gf_b = b.into();
-                if gf_a.mul(gf_b) == 1u8.into() {
+                if gf_a.mul(gf_b) == Self::one() {
                     return gf_b;
                 }
             }
@@ -132,7 +140,7 @@ pub trait CantorBasis<G: Gf2p8>:
         let mut basis = Vec::new();
 
         // Start with v0 = 1
-        let mut current: G = 1u8.into();
+        let mut current: G = G::one();
         basis.push(current);
 
         // Try to extend the chain using v_i^2 + v_i = v_{i-1}
@@ -142,7 +150,7 @@ pub trait CantorBasis<G: Gf2p8>:
             if !next.trace() {
                 current = next;
             } else {
-                current = next.add(1u8.into());
+                current = next.add(G::one());
             }
             basis.push(current);
 
@@ -165,7 +173,7 @@ pub trait CantorBasis<G: Gf2p8>:
     /// E(x) = product over missing indices j of (x ^ alpha_j).
     fn eval_erasure_locator_poly(&self, i: u8, erased_indices: &[u8]) -> G {
         let alpha_i = self.get_subspace_point(i);
-        let mut eval: G = 1u8.into();
+        let mut eval: G = G::one();
 
         for &j in erased_indices {
             if i == j {
@@ -180,7 +188,7 @@ pub trait CantorBasis<G: Gf2p8>:
 
     /// Returns the i-th point in the basis subspace.
     fn get_subspace_point(&self, i: u8) -> G {
-        let mut point: G = 0u8.into();
+        let mut point: G = G::zero();
         // Reverse the order of indices to match the reversed storage order.
         for (bit, elem) in (0..8).rev().zip(self.into_iter()) {
             if (i >> bit) & 1 != 0 {
@@ -255,7 +263,7 @@ pub trait CantorBasis<G: Gf2p8>:
 
     fn span_by_gray_code(&self, k: u8) -> Vec<G> {
         let size = 1 << k;
-        let mut span: Vec<G> = vec![0u8.into(); size];
+        let mut span: Vec<G> = vec![G::zero(); size];
         for i in 1..size {
             let lsb = i.trailing_zeros() as usize;
             span[i] = span[i ^ (1 << lsb)].add(self.as_ref()[lsb]);
@@ -271,7 +279,7 @@ pub trait CantorBasis<G: Gf2p8>:
     //     let log2_k = K.trailing_zeros() as usize;
     //     let k = 8 - log2_k;
 
-    //     let mut table = [0u8.into(); K];
+    //     let mut table = [G::zero(); K];
     //     let basis = self.as_ref();
 
     //     // Pre-compute projections b_l = s_l(v_l) for l < k.
@@ -308,7 +316,7 @@ pub trait CantorBasis<G: Gf2p8>:
     /// s_0(x) = x
     /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
     fn gen_subspace_poly_lut(&self, k: usize) -> [G; FIELD_SIZE] {
-        let mut table = [0u8.into(); FIELD_SIZE];
+        let mut table = [G::zero(); FIELD_SIZE];
 
         // Base case: s_0(x) = x
         for x in 0..FIELD_SIZE {
@@ -339,7 +347,7 @@ pub trait CantorBasis<G: Gf2p8>:
     /// s_0(x) = x
     /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
     fn gen_all_subspace_poly_luts(&self) -> [[G; FIELD_SIZE]; 9] {
-        let mut luts = [[0u8.into(); FIELD_SIZE]; 9];
+        let mut luts = [[G::zero(); FIELD_SIZE]; 9];
 
         // 1. Initialize s_0(x) = x
         for (x, s_0_x) in luts[0].iter_mut().enumerate() {
@@ -377,7 +385,7 @@ pub trait CantorBasis<G: Gf2p8>:
         let mut factors = [0u8; FIELD_SIZE];
 
         for (i, f) in factors.iter_mut().enumerate() {
-            let mut p: G = 1u8.into();
+            let mut p: G = G::one();
             for (j, &b) in basis_image.iter().enumerate() {
                 if (i >> j) & 1 == 1 {
                     p = p.mul(b);
@@ -400,10 +408,10 @@ pub trait Gf2p8Lut: Gf2p8 {
 
     /// Helper to multiply a shard by a scalar
     fn scale_shard(self, shard: &mut [u8]) {
-        if self == 1u8.into() {
+        if self == Self::one() {
             return;
         }
-        if self == 0u8.into() {
+        if self == Self::zero() {
             shard.fill(0);
             return;
         }
@@ -422,7 +430,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     /// E(x) = product over missing indices j of (x ^ alpha_j).
     fn eval_erasure_locator_poly_lut(&self, i: u8, erased_indices: &[u8]) -> G {
         let alpha_i = self.get_subspace_point_lut(i);
-        let mut eval: G = 1u8.into();
+        let mut eval: G = G::one();
 
         for &j in erased_indices {
             if i == j {
@@ -442,7 +450,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     /// A basis of the algebraic ring $F_{2^m}[x]/(x^{2^m}-x)$ which forms the evaluation space.
     fn compute_evaluation_space_basis_point(&self, i: u8, x: G) -> G {
         let m = 8;
-        let mut result: G = 1u8.into();
+        let mut result: G = G::one();
         let mut s_j_x = x;
 
         for j in 0..m {
@@ -460,44 +468,9 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 
         result
     }
-}
 
-/// The Lin-Chung-Han basis
-pub trait LchBasisLut<G: Gf2p8Lut>: CantorBasisLut<G> {
-    /// Evaluate the i-th LCH basis polynomial at point x.  The default implementation assumes a
-    /// Cantor basis in the evaluation domain, which doesn't require scaling terms by a
-    /// normalization factor.
-    fn eval_lch_basis_poly(&self, i: u8, x: G) -> G {
-        let mut result: G = 1u8.into();
-
-        for j in 0u8..8 {
-            if (i >> j) & 1 == 1 {
-                let s_j_x = self.eval_subspace_poly_lut(j, x);
-                result = result.mul(s_j_x);
-            }
-        }
-
-        result
-    }
-
-    /// $\overline{D}_h (x)$
-    fn eval_transform_domain_poly(&self, coeffs: &[G], x: G) -> G {
-        // debug_assert!((0..=8).any(|k| coeffs.len() == 2usize.pow(k) - 1));
-        // let k = coeffs.len().trailing_zeros() as usize;
-        let mut result: G = 0u8.into();
-
-        for (i, d) in coeffs.iter().enumerate() {
-            let term = d.mul(self.eval_lch_basis_poly(i as u8, x));
-            result = result.add(term);
-        }
-
-        result
-    }
-}
-
-pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
     /// Algorithm 1 in LCH paper.
-    fn fft(&self, coeffs: &mut [G], k: u8, beta: G) {
+    fn fft_scalar(&self, coeffs: &mut [G], k: u8, beta: G) {
         if k == 0 {
             return;
         }
@@ -525,25 +498,25 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
 
         // Recursive calls (line 7-8)
         // Left branch: FFT(g_0, k-1, beta)
-        self.fft(&mut coeffs[..half], k - 1, beta);
+        self.fft_scalar(&mut coeffs[..half], k - 1, beta);
 
         // Right branch: FFT(g_1, k-1, v_{k-1} + beta)
         let next_beta = beta.add(self.get_basis_point_lut(k - 1));
-        self.fft(&mut coeffs[half..], k - 1, next_beta);
+        self.fft_scalar(&mut coeffs[half..], k - 1, next_beta);
     }
 
     /// Algorithm 2 in LCH paper.
-    fn ifft(&self, evals: &mut [G], k: u8, beta: G) {
+    fn ifft_scalar(&self, evals: &mut [G], k: u8, beta: G) {
         if k == 0 {
             return;
         }
 
         let half = 1 << (k - 1);
 
-        self.ifft(&mut evals[..half], k - 1, beta);
+        self.ifft_scalar(&mut evals[..half], k - 1, beta);
 
         let next_beta = beta.add(self.get_basis_point_lut(k - 1));
-        self.ifft(&mut evals[half..], k - 1, next_beta);
+        self.ifft_scalar(&mut evals[half..], k - 1, next_beta);
 
         let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
 
@@ -609,6 +582,188 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
     }
 
+    /// Performs A = Q * B + R in Basis X.
+    fn poly_div_rem<I, O>(&self, dividend: I, divisor: I, mut quotient: O, mut remainder: O, k: u8)
+    where
+        I: AsRef<[G]>,
+        O: AsMut<[G]> + AsRef<[G]>,
+    {
+        let d_lc_inv = divisor.leading_coeff().inv_lut();
+        let d_deg = divisor.degree();
+
+        quotient.as_mut().fill(G::zero());
+        remainder.as_mut().fill(G::zero());
+
+        let src = dividend.as_ref();
+        remainder.as_mut()[..src.len()].copy_from_slice(src);
+
+        // Synthetic division loop
+        loop {
+            let (deg, lc) = {
+                let deg = remainder.as_ref().degree();
+                if deg < d_deg {
+                    break;
+                }
+                let lc = remainder.leading_coeff();
+                if lc == G::zero() {
+                    break;
+                }
+                (deg, lc)
+            };
+            // q_term = (LC(R) / LC(B)) * X_{r_deg - d_deg}
+            let q_coeff = lc.mul(d_lc_inv);
+            let deg_diff = deg - d_deg;
+            quotient.as_mut()[deg_diff] = q_coeff;
+
+            // R = R - (q_coeff * X_deg_diff * B)
+            self.poly_fused_mul_add(remainder.as_mut(), divisor.as_ref(), q_coeff, deg_diff, k);
+        }
+    }
+
+    /// Fused multiply-add scaled to a subspace of size 2^k.
+    ///
+    /// out ^= (coeff * X_deg) * rhs (mod s_k(x))
+    fn poly_fused_mul_add<I, O>(&self, mut out: O, rhs: I, coeff: G, deg: usize, k: u8)
+    where
+        I: AsRef<[G]>,
+        O: AsMut<[G]>,
+    {
+        let n = 1 << k;
+
+        // deg must be within the subspace, and input lengths must not exceed n.
+        debug_assert!(deg < n);
+
+        let rhs_ref = rhs.as_ref();
+        let rhs_len = rhs_ref.len().min(n);
+
+        // Use 256-sized buffers for the FFT implementation but process only the first n elements.
+        let mut tmp_q = [G::zero(); FIELD_SIZE];
+        let mut tmp_rhs = [G::zero(); FIELD_SIZE];
+
+        // Prepare LCH coefficients
+        tmp_q[deg] = coeff;
+        tmp_rhs[..rhs_len].copy_from_slice(&rhs_ref[..rhs_len]);
+
+        // FFT to the evaluation space of size n
+        // beta = 0 because we are multiplying in the standard subspace V_k
+        self.fft_scalar(&mut tmp_q, k, G::zero());
+        self.fft_scalar(&mut tmp_rhs, k, G::zero());
+
+        // Pointwise multiplication in the evaluation space
+        for i in 0..n {
+            tmp_q[i] = tmp_q[i].mul(tmp_rhs[i]);
+        }
+
+        // IFFT back to the coefficient space in the basis X
+        self.ifft_scalar(&mut tmp_q, k, G::zero());
+
+        // Accumulate into the output
+        // out might be smaller than n, so we zip carefully
+        let out_ref = out.as_mut();
+        let limit = out_ref.len().min(n);
+        for (o, t) in out_ref[..limit].iter_mut().zip(tmp_q[..limit].iter()) {
+            *o = o.add(*t);
+        }
+    }
+
+    /// Step 2 of decoding: key equation solver via extended Euclidean algorithm.
+    /// Solves: z_0(x) = s(x)λ(x) + q(x)s_t(x)
+    ///
+    /// # Arguments
+    /// * `syndrome` - Input syndrome polynomial.
+    /// * `v1`       - Workspace for auxiliary polynomial v1.
+    /// * `k`        - log_2 of the parity size T (subspace dimension).
+    ///
+    /// # Returns
+    /// * `.0` - Coeffcients of the Evaluator Polynomial z_0.
+    /// * `.1` - Coeficients of the Error Locator Polynomial λ.
+    fn solve_key_equation_eea(&self, syndrome: &[G], k: u8) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
+        let t_parity = 1 << k;
+        let t_half = t_parity / 2;
+
+        // Workspace for r0 (starts as subspace polynomial s_t).
+        let mut r0 = [G::zero(); FIELD_SIZE];
+        // r0 = s_t(x). In basis X with Cantor optimization, this is monic degree T.
+        r0[t_parity] = G::one();
+        // Workspace for auxiliary polynomial v0. Starts as 0.
+        let mut v0 = [G::zero(); FIELD_SIZE];
+
+        let mut r1 = [G::zero(); FIELD_SIZE];
+        r1[..syndrome.len()].copy_from_slice(syndrome);
+        // v1 = 1
+        let mut v1 = [G::zero(); FIELD_SIZE];
+        v1[0] = G::one();
+
+        // let mut r1 = r1;
+        // let mut r0 = &mut r0.as_mut_slice();
+        // let mut v1 = &mut v1;
+        // let mut v0 = &mut v0;
+
+        // EEA loop. Terminate when degree(r1) < T/2.
+        loop {
+            let r1_deg = r1.degree();
+            if r1_deg < t_half {
+                break;
+            }
+
+            let r0_deg = r0.degree();
+            let r0_lc = r0.leading_coeff();
+            let r1_lc = r1.leading_coeff();
+
+            // Elimination: q_step = (LC(r0) / LC(r1)) * X^{deg_diff}
+            let q_coeff = r0_lc.mul(r1_lc.inv_lut());
+            let deg_diff = r0_deg - r1_deg;
+
+            // r0 = r0 - (q_coeff * X_deg_diff * r1)
+            // v0 = v0 - (q_coeff * X_deg_diff * v1)
+            self.poly_fused_mul_add(&mut r0, &r1, q_coeff, deg_diff, k);
+            self.poly_fused_mul_add(&mut v0, &v1, q_coeff, deg_diff, k);
+
+            // If the degree of r0 is still >= r1_deg, we continue synthetic division
+            // within the same EEA step. Otherwise, we swap for the next step.
+            if r0.degree() < r1_deg {
+                std::mem::swap(&mut r0, &mut r1);
+                std::mem::swap(&mut v0, &mut v1);
+            }
+        }
+        (r1, v1)
+    }
+}
+
+/// The Lin-Chung-Han basis
+pub trait LchBasisLut<G: Gf2p8Lut>: CantorBasisLut<G> {
+    /// Evaluate the i-th LCH basis polynomial at point x.  The default implementation assumes a
+    /// Cantor basis in the evaluation domain, which doesn't require scaling terms by a
+    /// normalization factor.
+    fn eval_lch_basis_poly(&self, i: u8, x: G) -> G {
+        let mut result: G = G::one();
+
+        for j in 0u8..8 {
+            if (i >> j) & 1 == 1 {
+                let s_j_x = self.eval_subspace_poly_lut(j, x);
+                result = result.mul(s_j_x);
+            }
+        }
+
+        result
+    }
+
+    /// $\overline{D}_h (x)$
+    fn eval_transform_domain_poly(&self, coeffs: &[G], x: G) -> G {
+        // debug_assert!((0..=8).any(|k| coeffs.len() == 2usize.pow(k) - 1));
+        // let k = coeffs.len().trailing_zeros() as usize;
+        let mut result: G = G::zero();
+
+        for (i, d) in coeffs.iter().enumerate() {
+            let term = d.mul(self.eval_lch_basis_poly(i as u8, x));
+            result = result.add(term);
+        }
+
+        result
+    }
+}
+
+pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
     /// Systematic Reed-Solomon encoding: The message stays the same. Only parity is modified.
     ///
     /// This method is for the special case when the number of message shards equals the number of
@@ -624,7 +779,50 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
 
         let beta = self.get_subspace_point_lut(num_parity as u8);
         self.ifft_sharded(parity_shards, log_num_parity, beta);
-        self.fft_sharded(parity_shards, log_num_parity, 0u8.into());
+        self.fft_sharded(parity_shards, log_num_parity, G::zero());
+    }
+
+    /// Syndrome calculation (scalar).
+    /// Computes s = sum_{i=0}^{n/T-1} IFFT(r_i, t, omega_{i*T})
+    fn compute_syndrome_scalar(
+        &self,
+        received: &[G], // Size n (e.g., 256)
+        t_log: u8,      // log_2(T)
+    ) -> Vec<G> {
+        let t_parity = 1 << t_log;
+        // Reserve the extra bit for the key equation solver (EEA requirement).
+        let mut syndrome = vec![G::zero(); t_parity + 1];
+
+        // Workspace on stack to avoid heap allocation.
+        let mut workspace = [G::zero(); FIELD_SIZE];
+
+        for (i, chunk) in received.chunks(t_parity).enumerate() {
+            // beta corresponds to the starting point of the i-th chunk: omega_{i*T}
+            let omega_idx = (i * t_parity) as u8;
+            let beta = self.get_subspace_point_lut(omega_idx);
+
+            // Copy received chunk into workspace
+            // Pad with zeros if the last chunk is partial (Eq 63)
+            workspace[..t_parity].fill(G::zero());
+            for (w, &r) in workspace.iter_mut().zip(chunk.iter()) {
+                *w = r;
+            }
+
+            // Perform the partial IFFT (Algorithm 2)
+            // This moves the chunk from Evaluation Space -> Novel Basis Coefficients
+            self.ifft_scalar(&mut workspace[..t_parity], t_log, beta);
+
+            // Accumulate into the syndrome buffer
+            for (s, &w) in syndrome
+                .iter_mut()
+                .take(t_parity)
+                .zip(workspace[..t_parity].iter())
+            {
+                *s = s.add(w);
+            }
+        }
+
+        syndrome
     }
 
     /// Computes the syndrome $\mathbf{s}(x)$ per LCH formalism:
@@ -634,7 +832,7 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
     /// * `received_shards` - Full array of n shards [parity_0..parity_{T-1}, data_0..data_{k-1}]
     /// * `syndrome_shards` - Output buffer of size T (coefficients of s(x))
     /// * `scratchpad`      - Workspace of size T shards
-    fn compute_syndrome(
+    fn compute_syndrome_sharded(
         &self,
         received_shards: &[&[u8]],
         syndrome_shards: &mut [&mut [u8]],
@@ -671,4 +869,105 @@ pub trait Fft<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
             }
         }
     }
+
+    /// Systematic scalar RS decoder.
+    ///
+    /// # Arguments
+    /// * `received` - Received bytes, including both parity and message. Contains the decoding upon return.
+    /// * `k_msg`    - Message length such that $T = 256 - k$ is the number of parity shards, $T$ is a power of 2.
+    ///
+    /// # Returns
+    /// * `true`     - if decoding succeeded
+    /// * `false`    - if decoding failed
+    fn decode_systematic_scalar(&self, received: &mut [G], k_msg: usize) -> bool {
+        let n = FIELD_SIZE;
+        let t_parity = n - k_msg;
+        let t_log = t_parity.trailing_zeros() as u8;
+        let m_log = 8;
+
+        // Step 1: Syndrome calculation
+        let syndrome = self.compute_syndrome_scalar(received, t_log);
+
+        // Early Exit: If syndrome is all zero, no errors occurred.
+        if syndrome.iter().take(t_parity).all(|&c| c == G::zero()) {
+            return true;
+        }
+
+        // Step 2: Solve the key equation (EEA)
+        let (mut z0, lambda_coeffs) = self.solve_key_equation_eea(&syndrome[..t_parity + 1], t_log);
+
+        // Step 3: Find error locations (roots)
+        // Evaluate lambda(x) at all points omega_0...omega_255 using FFT.
+        let mut lambda_evals = lambda_coeffs; // Copy
+        self.fft_scalar(&mut lambda_evals, m_log, G::zero());
+
+        let mut error_indices = Vec::with_capacity(t_parity);
+        for (i, &eval) in lambda_evals.iter().enumerate() {
+            if eval == G::zero() {
+                error_indices.push(i);
+            }
+        }
+
+        // Integrity Check: Number of roots must match degree of lambda
+        let deg_lambda = lambda_coeffs.degree();
+        if error_indices.len() != deg_lambda {
+            return false;
+        }
+
+        // Step 4: Calculate error values (eq 78)
+        // Compute lambda'(x) coefficients
+        let mut lp = [G::zero(); FIELD_SIZE];
+        for i in (1..FIELD_SIZE).step_by(2) {
+            lp[i - 1] = lambda_coeffs[i];
+        }
+
+        // Evaluate z0(x) and lambda'(x) at all points using FFT
+        self.fft_scalar(&mut z0, m_log, G::zero());
+        self.fft_scalar(&mut lp, m_log, G::zero());
+
+        // Correction: e_i = z0(omega_i) / lp(omega_i)
+        for i in error_indices {
+            let error_val = z0[i].mul(lp[i].inv_lut());
+            received[i] = received[i].add(error_val);
+        }
+
+        true
+    }
 }
+
+impl<G: Gf2p8Lut, T: CantorBasisLut<G> + LchBasisLut<G>> Codec<G> for T {}
+
+pub trait PolyOps<G: Gf2p8Lut>: AsRef<[G]> {
+    fn degree(&self) -> usize {
+        self.as_ref()
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, c)| **c != G::zero())
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    }
+
+    fn leading_coeff(&self) -> G {
+        let coeffs = self.as_ref();
+        coeffs.get(self.degree()).copied().unwrap_or(G::zero())
+    }
+}
+
+impl<G: Gf2p8Lut, T: AsRef<[G]>> PolyOps<G> for T {}
+
+// pub struct Poly<'a, G>(pub &'a [G]);
+
+// impl<'a, G> AsRef<[G]> for Poly<'a, G> {
+//     fn as_ref(&self) -> &[G] {
+//         self.0
+//     }
+// }
+
+// pub struct PolyMut<'a, G>(pub &'a mut [G]);
+
+// impl<'a, G> AsMut<[G]> for PolyMut<'a, G> {
+//     fn as_mut(&mut self) -> &mut [G] {
+//         self.0
+//     }
+// }

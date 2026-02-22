@@ -1,7 +1,7 @@
 use crate::gf2p8::{
     Gf2p8, Gf2p8_11d,
     bit_matrix::BitMatrix,
-    generic::{CantorBasisLut, Fft, Gf2p8Lut, LchBasisLut},
+    generic::{CantorBasisLut, Gf2p8Lut, LchBasisLut},
 };
 
 pub mod generated {
@@ -36,8 +36,6 @@ impl BasesLut11d {
         }
     }
 }
-
-impl Fft<Gf2p8_11d> for BasesLut11d {}
 
 impl CantorBasisLut<Gf2p8_11d> for BasesLut11d {
     fn get_basis_point_lut(&self, i: u8) -> Gf2p8_11d {
@@ -399,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn fft_ifft_id() {
+    fn scalar_fft_ifft_id() {
         let bases = BasesLut11d::new();
         let mut data = [0u8.into(); 256];
 
@@ -410,12 +408,12 @@ mod tests {
         let original = data;
 
         // k=8 for 256 points, beta=0 for the standard subspace V_8
-        bases.fft(&mut data, 8, 0u8.into());
+        bases.fft_scalar(&mut data, 8, 0u8.into());
 
         println!("FFT result: {:?}", unwrap_gfs(data.iter()));
         assert_ne!(data, original, "FFT should have transformed the data");
 
-        bases.ifft(&mut data, 8, 0u8.into());
+        bases.ifft_scalar(&mut data, 8, 0u8.into());
 
         for i in 0..256 {
             assert_eq!(
