@@ -672,13 +672,17 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     /// # Arguments
     /// * `syndrome` - Input syndrome polynomial.
     /// * `v1`       - Workspace for auxiliary polynomial v1.
-    /// * `k`        - log_2 of the parity size T (subspace dimension).
+    /// * `t_log`    - log_2 of the parity size T (subspace dimension).
     ///
     /// # Returns
-    /// * `.0` - Coeffcients of the Evaluator Polynomial z_0.
+    /// * `.0` - Coeffcients of the Quotient Polynomial q.
     /// * `.1` - Coeficients of the Error Locator Polynomial λ.
-    fn solve_key_equation_eea(&self, syndrome: &[G], k: u8) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
-        let t_parity = 1 << k;
+    fn solve_key_equation_eea(
+        &self,
+        syndrome: &[G],
+        t_log: u8,
+    ) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
+        let t_parity = 1 << t_log;
         let t_half = t_parity / 2;
 
         // Workspace for r0 (starts as subspace polynomial s_t).
@@ -693,11 +697,6 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         // v1 = 1
         let mut v1 = [G::zero(); FIELD_SIZE];
         v1[0] = G::one();
-
-        // let mut r1 = r1;
-        // let mut r0 = &mut r0.as_mut_slice();
-        // let mut v1 = &mut v1;
-        // let mut v0 = &mut v0;
 
         // EEA loop. Terminate when degree(r1) < T/2.
         loop {
@@ -716,8 +715,8 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 
             // r0 = r0 - (q_coeff * X_deg_diff * r1)
             // v0 = v0 - (q_coeff * X_deg_diff * v1)
-            self.poly_fused_mul_add(&mut r0, &r1, q_coeff, deg_diff, k);
-            self.poly_fused_mul_add(&mut v0, &v1, q_coeff, deg_diff, k);
+            self.poly_fused_mul_add(&mut r0, r1, q_coeff, deg_diff, t_log + 1);
+            self.poly_fused_mul_add(&mut v0, v1, q_coeff, deg_diff, t_log + 1);
 
             // If the degree of r0 is still >= r1_deg, we continue synthetic division
             // within the same EEA step. Otherwise, we swap for the next step.
@@ -726,7 +725,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
                 std::mem::swap(&mut v0, &mut v1);
             }
         }
-        (r1, v1)
+        (v0, v1)
     }
 }
 
@@ -880,33 +879,48 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
     /// * `true`     - if decoding succeeded
     /// * `false`    - if decoding failed
     fn decode_systematic_scalar(&self, received: &mut [G], k_msg: usize) -> bool {
-        let n = FIELD_SIZE;
+        let n = received.len();
+        let m_log = n.trailing_zeros() as u8;
         let t_parity = n - k_msg;
         let t_log = t_parity.trailing_zeros() as u8;
-        let m_log = 8;
 
         // Step 1: Syndrome calculation
         let syndrome = self.compute_syndrome_scalar(received, t_log);
 
-        // Early Exit: If syndrome is all zero, no errors occurred.
+        // No errors occurred.
         if syndrome.iter().take(t_parity).all(|&c| c == G::zero()) {
             return true;
         }
 
         // Step 2: Solve the key equation (EEA)
-        let (mut z0, lambda_coeffs) = self.solve_key_equation_eea(&syndrome[..t_parity + 1], t_log);
+        let (mut q, mut lambda_coeffs) =
+            self.solve_key_equation_eea(&syndrome[..t_parity + 1], t_log);
+
+        // Normalization: lambda must be monic for the derivative logic
+        let inv_lc = lambda_coeffs.leading_coeff().inv_lut();
+        for c in lambda_coeffs.iter_mut() {
+            *c = c.mul(inv_lc);
+        }
+        for c in q.iter_mut() {
+            *c = c.mul(inv_lc);
+        }
+
+        let deg_lambda = lambda_coeffs.degree();
+        println!("deg_lambda = {deg_lambda}");
 
         // Step 3: Find error locations (roots)
         // Evaluate lambda(x) at all points omega_0...omega_255 using FFT.
         let mut lambda_evals = lambda_coeffs; // Copy
         self.fft_scalar(&mut lambda_evals, m_log, G::zero());
 
-        let mut error_indices = Vec::with_capacity(t_parity);
-        for (i, &eval) in lambda_evals.iter().enumerate() {
+        let mut error_indices = Vec::with_capacity(deg_lambda);
+        for (i, &eval) in lambda_evals.iter().take(t_parity).enumerate() {
             if eval == G::zero() {
                 error_indices.push(i);
             }
         }
+
+        println!("t_parity = {t_parity} error_indices = {error_indices:?}");
 
         // Integrity Check: Number of roots must match degree of lambda
         let deg_lambda = lambda_coeffs.degree();
@@ -916,18 +930,18 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
 
         // Step 4: Calculate error values (eq 78)
         // Compute lambda'(x) coefficients
-        let mut lp = [G::zero(); FIELD_SIZE];
+        let mut lp_evals = [G::zero(); FIELD_SIZE];
         for i in (1..FIELD_SIZE).step_by(2) {
-            lp[i - 1] = lambda_coeffs[i];
+            lp_evals[i - 1] = lambda_coeffs[i];
         }
 
         // Evaluate z0(x) and lambda'(x) at all points using FFT
-        self.fft_scalar(&mut z0, m_log, G::zero());
-        self.fft_scalar(&mut lp, m_log, G::zero());
+        self.fft_scalar(&mut q, m_log, G::zero());
+        self.fft_scalar(&mut lp_evals, m_log, G::zero());
 
         // Correction: e_i = z0(omega_i) / lp(omega_i)
         for i in error_indices {
-            let error_val = z0[i].mul(lp[i].inv_lut());
+            let error_val = q[i].mul(lp_evals[i].inv_lut());
             received[i] = received[i].add(error_val);
         }
 

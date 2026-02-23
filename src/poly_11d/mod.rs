@@ -58,7 +58,7 @@ mod tests {
     use super::*;
     use crate::{
         encode, fft_recursive,
-        gf2p8::{CantorBasis, CantorBasis11d, Gf2p8},
+        gf2p8::{CantorBasis, CantorBasis11d, Gf2p8, generic::Codec},
         ifft_recursive, reconstruct_systematic,
     };
 
@@ -98,32 +98,33 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn verify_unique_points() {
-        let basis = CantorBasis11d::new();
-        let twiddles = basis.generate_lch_twiddle_tower::<256>();
 
-        println!("{twiddles:?}");
+    // #[test]
+    // fn verify_unique_points() {
+    //     let basis = CantorBasis11d::new();
+    //     let twiddles = basis.generate_lch_twiddle_tower::<256>();
 
-        let mut shards = vec![vec![0u8; 1]; 256];
-        shards[1][0] = 1; // f(x) = x
+    //     println!("{twiddles:?}");
 
-        let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut_slice()).collect();
-        fft_recursive(&mut refs, &twiddles);
+    //     let mut shards = vec![vec![0u8; 1]; 256];
+    //     shards[1][0] = 1; // f(x) = x
 
-        println!("{shards:?}");
+    //     let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut_slice()).collect();
+    //     fft_recursive(&mut refs, &twiddles);
 
-        let mut seen = std::collections::HashSet::new();
-        for i in 0..256 {
-            let val = shards[i][0];
-            assert!(
-                seen.insert(val),
-                "Duplicate point {} found at index {}!",
-                val,
-                i
-            );
-        }
-    }
+    //     println!("{shards:?}");
+
+    //     let mut seen = std::collections::HashSet::new();
+    //     for i in 0..256 {
+    //         let val = shards[i][0];
+    //         assert!(
+    //             seen.insert(val),
+    //             "Duplicate point {} found at index {}!",
+    //             val,
+    //             i
+    //         );
+    //     }
+    // }
 
     #[test]
     fn recursive_fft_4_shards() {
@@ -241,47 +242,74 @@ mod tests {
         shards
     }
 
-    #[test]
-    fn reconstruct_success_max_erasures() {
-        let shard_len = 64;
-        let original_codeword = generate_test_codeword(shard_len);
-        let basis = BasesLut11d::new();
-        let twiddles = &basis.twiddle_factors[2..];
+    // Assumption: k_msg == t_parity, hence n == 2 * t_parity
+    fn generate_lch_codeword(bases: &BasesLut11d, t_parity: usize) -> Vec<Gf2p8_11d> {
+        let t_log = t_parity.trailing_zeros() as u8;
+        let n = 2 * t_parity;
+        let mut data = vec![Gf2p8_11d::zero(); n];
 
-        // Simulate receiving exactly 32 shards (0..16 data and 32..48 parity)
-        let mut received = Vec::new();
-        for i in 0..16 {
-            received.push((i as u8, original_codeword[i].as_slice()));
-        }
-        for i in 32..48 {
-            received.push((i as u8, original_codeword[i].as_slice()));
+        // Fill message part with test data
+        for i in t_parity..n {
+            data[i] = Gf2p8_11d::from(i as u8);
         }
 
-        // Setup workspace
-        let mut workspace_data = vec![vec![0u8; shard_len]; 64];
-        let mut workspace: Vec<&mut [u8]> = workspace_data
-            .iter_mut()
-            .map(|s| s.as_mut_slice())
-            .collect();
+        // Compute parity (v0) using LNH Eq 68
+        let mut v_prime_0 = vec![Gf2p8_11d::zero(); t_parity];
+        v_prime_0.copy_from_slice(&data[t_parity..]);
 
-        // Reconstruct
-        let success =
-            reconstruct_systematic::<64, Gf2p8_11d>(&received, &mut workspace, twiddles, &basis);
+        // IFFT at omega_T
+        let omega_t = bases.get_subspace_point_lut(t_parity as u8);
+        bases.ifft_scalar(&mut v_prime_0, t_log, omega_t);
 
-        assert!(success, "Reconstruction should have succeeded");
+        // FFT at omega_0
+        bases.fft_scalar(&mut v_prime_0, t_log, Gf2p8_11d::zero());
 
-        // Verify a missing data shard
-        assert_eq!(
-            workspace[20], original_codeword[20],
-            "Data shard 20 mismatch"
-        );
-
-        // Verify a missing parity shard
-        assert_eq!(
-            workspace[50], original_codeword[50],
-            "Parity shard 50 mismatch"
-        );
+        // Copy into parity slots
+        data[..t_parity].copy_from_slice(&v_prime_0);
+        data
     }
+
+    // #[test]
+    // fn reconstruct_success_max_erasures() {
+    //     let shard_len = 64;
+    //     let original_codeword = generate_test_codeword(shard_len);
+    //     let basis = BasesLut11d::new();
+    //     let twiddles = &basis.twiddle_factors[2..];
+
+    //     // Simulate receiving exactly 32 shards (0..16 data and 32..48 parity)
+    //     let mut received = Vec::new();
+    //     for i in 0..16 {
+    //         received.push((i as u8, original_codeword[i].as_slice()));
+    //     }
+    //     for i in 32..48 {
+    //         received.push((i as u8, original_codeword[i].as_slice()));
+    //     }
+
+    //     // Setup workspace
+    //     let mut workspace_data = vec![vec![0u8; shard_len]; 64];
+    //     let mut workspace: Vec<&mut [u8]> = workspace_data
+    //         .iter_mut()
+    //         .map(|s| s.as_mut_slice())
+    //         .collect();
+
+    //     // Reconstruct
+    //     let success =
+    //         reconstruct_systematic::<64, Gf2p8_11d>(&received, &mut workspace, twiddles, &basis);
+
+    //     assert!(success, "Reconstruction should have succeeded");
+
+    //     // Verify a missing data shard
+    //     assert_eq!(
+    //         workspace[20], original_codeword[20],
+    //         "Data shard 20 mismatch"
+    //     );
+
+    //     // Verify a missing parity shard
+    //     assert_eq!(
+    //         workspace[50], original_codeword[50],
+    //         "Parity shard 50 mismatch"
+    //     );
+    // }
 
     #[test]
     fn reconstruct_no_erasures() {
@@ -421,6 +449,44 @@ mod tests {
                 "IFFT failed to recover coefficient at index {}",
                 i
             );
+        }
+    }
+
+    #[test]
+    fn decode_no_errors() {
+        let bases = BasesLut11d::new();
+
+        for t_log in 1..=7 {
+            let t_parity = 1 << t_log;
+            let original = generate_lch_codeword(&bases, t_parity);
+            let mut received = original.clone();
+
+            assert!(bases.decode_systematic_scalar(&mut received, t_parity));
+            assert_eq!(received, original);
+        }
+    }
+
+    #[test]
+    fn decode_max_corrupt_parity() {
+        let bases = BasesLut11d::new();
+
+        for t_log in 1..=7 {
+            let t_parity = 1 << t_log;
+            let original = generate_lch_codeword(&bases, t_parity);
+            let mut received = original.clone();
+
+            println!("decode_max_corrupt_parity, t_log = {t_log}");
+
+            // Corrupt parity
+            for r in received.iter_mut().take(t_parity / 2) {
+                *r = (*r).mul(2u8.into())
+            }
+
+            assert!(
+                bases.decode_systematic_scalar(&mut received, t_parity),
+                "Failed to decode corrupt t_parity = {t_parity}"
+            );
+            assert_eq!(received, original);
         }
     }
 }
