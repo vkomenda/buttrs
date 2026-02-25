@@ -58,7 +58,10 @@ mod tests {
     use super::*;
     use crate::{
         encode, fft_recursive,
-        gf2p8::{CantorBasis, CantorBasis11d, Gf2p8, generic::Codec},
+        gf2p8::{
+            CantorBasis, CantorBasis11d, Gf2p8,
+            generic::{Codec, deriv_poly, deriv_poly_iterative},
+        },
         ifft_recursive, reconstruct_systematic,
     };
 
@@ -387,6 +390,53 @@ mod tests {
                 assert_eq!(p, prod);
             }
         }
+    }
+
+    #[test]
+    fn deriv_subspace_poly_luts() {
+        let basis = CantorBasis11d::new();
+        assert!(
+            basis
+                .gen_deriv_subspace_poly_lut()
+                .iter()
+                .all(|d| *d == Gf2p8_11d::one())
+        );
+    }
+
+    #[test]
+    fn deriv_basic() {
+        type G = Gf2p8_11d;
+        let mut out = [G::zero(); 4];
+        let mut out_it = out;
+
+        // p1 = x
+        let p1 = [G::zero(), G::one(), G::zero(), G::zero()];
+        deriv_poly(&p1, &mut out, 2);
+        assert_eq!(out, [G::one(), G::zero(), G::zero(), G::zero()]);
+
+        out_it.fill(G::zero());
+        deriv_poly_iterative(&p1, &mut out_it);
+        assert_eq!(out_it, out);
+
+        // p2 = x^2 + x
+        let p2 = [G::zero(), G::zero(), G::one(), G::zero()];
+        deriv_poly(&p2, &mut out, 2);
+        assert_eq!(out, [G::one(), G::zero(), G::zero(), G::zero()]);
+
+        out_it.fill(G::zero());
+        deriv_poly_iterative(&p2, &mut out_it);
+        assert_eq!(out_it, out);
+
+        // p3(x) = x^3 + x^2
+        // monomial derivative: 3x^2 + 2x = x^2 in GF(2)
+        // LCH basis: x^2 = (x^2 + x) + x = p1 + p2
+        let p3 = [G::zero(), G::zero(), G::zero(), G::one()];
+        deriv_poly(&p3, &mut out, 2);
+        assert_eq!(out, [G::zero(), G::one(), G::one(), G::zero()]);
+
+        out_it.fill(G::zero());
+        deriv_poly_iterative(&p3, &mut out_it);
+        assert_eq!(out_it, out);
     }
 
     // #[test]

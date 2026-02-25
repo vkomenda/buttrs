@@ -396,6 +396,22 @@ pub trait CantorBasis<G: Gf2p8>:
 
         factors
     }
+
+    /// Generates the derivatives of subspace polynomial terms.
+    fn gen_deriv_subspace_poly_lut(&self) -> [G; 9] {
+        let mut derivs = [G::one(); 9];
+
+        for (i, d) in derivs.iter_mut().enumerate() {
+            let span = self.span_by_gray_code(i as u8);
+            for s in span {
+                if s != G::zero() {
+                    *d = (*d).mul(s)
+                }
+            }
+        }
+
+        derivs
+    }
 }
 
 /// Precomputed lookup table group operations.
@@ -671,7 +687,6 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     ///
     /// # Arguments
     /// * `syndrome` - Input syndrome polynomial.
-    /// * `v1`       - Workspace for auxiliary polynomial v1.
     /// * `t_log`    - log_2 of the parity size T (subspace dimension).
     ///
     /// # Returns
@@ -684,14 +699,15 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     ) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
         let t_parity = 1 << t_log;
         let t_half = t_parity / 2;
+        let k_arith = t_log + 1;
 
         // Workspace for r0 (starts as subspace polynomial s_t).
         let mut r0 = [G::zero(); FIELD_SIZE];
         // r0 = s_t(x). In basis X with Cantor optimization, this is monic degree T.
         r0[t_parity] = G::one();
-        // Workspace for auxiliary polynomial v0. Starts as 0.
+        // q. Starts as 0.
         let mut v0 = [G::zero(); FIELD_SIZE];
-
+        // z_0
         let mut r1 = [G::zero(); FIELD_SIZE];
         r1[..syndrome.len()].copy_from_slice(syndrome);
         // v1 = 1
@@ -715,8 +731,8 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 
             // r0 = r0 - (q_coeff * X_deg_diff * r1)
             // v0 = v0 - (q_coeff * X_deg_diff * v1)
-            self.poly_fused_mul_add(&mut r0, r1, q_coeff, deg_diff, t_log + 1);
-            self.poly_fused_mul_add(&mut v0, v1, q_coeff, deg_diff, t_log + 1);
+            self.poly_fused_mul_add(&mut r0, r1, q_coeff, deg_diff, k_arith);
+            self.poly_fused_mul_add(&mut v0, v1, q_coeff, deg_diff, k_arith);
 
             // If the degree of r0 is still >= r1_deg, we continue synthetic division
             // within the same EEA step. Otherwise, we swap for the next step.
@@ -726,6 +742,60 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
             }
         }
         (v0, v1)
+    }
+}
+
+/// Computes the formal derivative of a polynomial in the basis X.
+/// Follows Eq 82 from the LNH paper.
+pub fn deriv_poly<G: Gf2p8>(coeffs: &[G], out: &mut [G], k: u8) {
+    if k == 0 {
+        out[0] = G::zero();
+        return;
+    }
+
+    let half = 1 << (k - 1);
+    let (low, high) = coeffs.split_at(half);
+    let (out_low, out_high) = out.split_at_mut(half);
+
+    // Compute [D0]' and [D1]'
+    deriv_poly(low, out_low, k - 1);
+    deriv_poly(high, out_high, k - 1);
+
+    // Combine the results according to Eq 82
+    // out_low has [D0]'
+    // out_high has [D1]'
+
+    // Term 2: Add s'_{k-1} * D1. Assuming s' = 1, we XOR high into out_low.
+    for (l, h) in out_low.iter_mut().zip(high.iter()) {
+        *l = l.add(*h);
+    }
+
+    // Term 3: s_{k-1} * [D1]' is already in out_high.  Multiplying by s_{k-1} in basis X is
+    // just a shift into the upper half of the coefficient vector.
+}
+
+pub fn deriv_poly_iterative<G: Gf2p8>(coeffs: &[G], out: &mut [G]) {
+    let n = coeffs.len();
+    let m = n.trailing_zeros() as usize;
+
+    out.fill(G::zero());
+
+    for j in (1..=m).rev() {
+        let step = 1 << j;
+        let half = 1 << (j - 1);
+
+        // Iterate through each subspace coset at this level
+        for start in (0..n).step_by(step) {
+            let (low_out, _high_out) = out[start..start + step].split_at_mut(half);
+            let high_in = &coeffs[start + half..start + step];
+
+            // Eq 82: Low Part += s'_{j-1} * High Part
+            // The high part of 'out' is updated automatically in subsequent iterations
+            // (smaller j) acting on the high blocks.
+            for (l, &h) in low_out.iter_mut().zip(high_in.iter()) {
+                *l = l.add(h);
+            }
+        }
     }
 }
 
@@ -880,8 +950,11 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
     /// * `false`    - if decoding failed
     fn decode_systematic_scalar(&self, received: &mut [G], k_msg: usize) -> bool {
         let n = received.len();
-        let m_log = n.trailing_zeros() as u8;
+        let n_log = n.trailing_zeros() as u8;
         let t_parity = n - k_msg;
+        if t_parity == 0 {
+            return true;
+        }
         let t_log = t_parity.trailing_zeros() as u8;
 
         // Step 1: Syndrome calculation
@@ -893,15 +966,15 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
 
         // Step 2: Solve the key equation (EEA)
-        let (mut q, mut lambda_coeffs) =
-            self.solve_key_equation_eea(&syndrome[..t_parity + 1], t_log);
+        let (mut z0_coeffs, mut lambda_coeffs) =
+            self.solve_key_equation_eea(&syndrome[..t_parity], t_log);
 
         // Normalization: lambda must be monic for the derivative logic
         let inv_lc = lambda_coeffs.leading_coeff().inv_lut();
         for c in lambda_coeffs.iter_mut() {
             *c = c.mul(inv_lc);
         }
-        for c in q.iter_mut() {
+        for c in z0_coeffs.iter_mut() {
             *c = c.mul(inv_lc);
         }
 
@@ -909,9 +982,8 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         println!("deg_lambda = {deg_lambda}");
 
         // Step 3: Find error locations (roots)
-        // Evaluate lambda(x) at all points omega_0...omega_255 using FFT.
         let mut lambda_evals = lambda_coeffs; // Copy
-        self.fft_scalar(&mut lambda_evals, m_log, G::zero());
+        self.fft_scalar(&mut lambda_evals, n_log, G::zero());
 
         let mut error_indices = Vec::with_capacity(deg_lambda);
         for (i, &eval) in lambda_evals.iter().take(t_parity).enumerate() {
@@ -936,12 +1008,12 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
 
         // Evaluate z0(x) and lambda'(x) at all points using FFT
-        self.fft_scalar(&mut q, m_log, G::zero());
-        self.fft_scalar(&mut lp_evals, m_log, G::zero());
+        self.fft_scalar(&mut z0_coeffs, n_log, G::zero());
+        self.fft_scalar(&mut lp_evals, n_log, G::zero());
 
         // Correction: e_i = z0(omega_i) / lp(omega_i)
         for i in error_indices {
-            let error_val = q[i].mul(lp_evals[i].inv_lut());
+            let error_val = z0_coeffs[i].mul(lp_evals[i].inv_lut());
             received[i] = received[i].add(error_val);
         }
 
