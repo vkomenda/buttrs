@@ -958,19 +958,9 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
 
         // Step 2: Solve the key equation (EEA)
-        let (mut q_coeffs, mut lambda_coeffs) = self.solve_key_equation_eea(&syndrome, t_log);
-
-        // Normalization: lambda must be monic for the derivative logic
-        let inv_lc = lambda_coeffs.leading_coeff().inv_lut();
-        for c in lambda_coeffs.iter_mut() {
-            *c = c.mul(inv_lc);
-        }
-        for c in q_coeffs.iter_mut() {
-            *c = c.mul(inv_lc);
-        }
+        let (q_coeffs, lambda_coeffs) = self.solve_key_equation_eea(&syndrome, t_log);
 
         let deg_lambda = lambda_coeffs.degree();
-        println!("deg_lambda = {deg_lambda}");
 
         // Step 3: Find error locations (roots)
         let mut lambda_evals = lambda_coeffs; // Copy
@@ -982,8 +972,6 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
                 error_indices.push(i);
             }
         }
-
-        println!("t_parity = {t_parity} error_indices = {error_indices:?}");
 
         // Integrity Check: Number of roots must match degree of lambda
         if error_indices.len() != deg_lambda {
@@ -1003,7 +991,7 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
 
         // Correction: e_i = q(omega_i) / lp(omega_i)
         for i in error_indices {
-            let error_val = q_coeffs[i].mul(lambdap_evals[i].inv_lut());
+            let error_val = q_evals[i].mul(lambdap_evals[i].inv_lut());
             received[i] = received[i].add(error_val);
         }
 
