@@ -931,6 +931,26 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
     }
 
+    /// Recomputes data from parity when $n = 2T$.
+    fn recompute_data_from_parity(&self, received: &mut [G]) {
+        let n = received.len();
+        let n_log = n.trailing_zeros() as u8;
+        let t_log = n_log - 1;
+        let t_parity = 1 << t_log;
+
+        let mut workspace = [G::zero(); FIELD_SIZE];
+
+        workspace[..t_parity].copy_from_slice(&received[..t_parity]);
+        self.ifft_scalar(&mut workspace, t_log, G::zero());
+        self.fft_scalar(
+            &mut workspace,
+            t_log,
+            self.get_subspace_point_lut(t_parity as u8),
+        );
+
+        received[t_parity..].copy_from_slice(&workspace[..t_parity]);
+    }
+
     /// Systematic scalar RS decoder.
     ///
     /// # Arguments
