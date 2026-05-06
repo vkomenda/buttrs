@@ -84,6 +84,11 @@ fn main() {
     }
     writeln!(f, "];").unwrap();
 
+    let sub_poly_coeffs_iter = CantorBasis11d::gen_subspace_poly_coeffs();
+
+    write!(f, "\npub const SUBSPACE_POLY_COEFFS: [u8; 9] = [").unwrap();
+    write_points(&mut f, sub_poly_coeffs_iter, false);
+
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/gf2p8/mod.rs");
     println!("cargo:rerun-if-changed=src/gf2p8/generic.rs");

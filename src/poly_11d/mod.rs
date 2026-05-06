@@ -46,6 +46,10 @@ impl CantorBasisLut<Gf2p8_11d> for BasesLut11d {
         generated::CANTOR_SUBSPACE[i as usize].into()
     }
 
+    fn get_subspace_poly_coeff_lut(&self, k: u8) -> u8 {
+        generated::SUBSPACE_POLY_COEFFS[k as usize].into()
+    }
+
     fn eval_subspace_poly_lut(&self, k: u8, x: Gf2p8_11d) -> Gf2p8_11d {
         generated::SUBSPACE_POLY_VALUES[k as usize][x.into_usize()].into()
     }

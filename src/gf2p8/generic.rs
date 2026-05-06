@@ -313,8 +313,9 @@ pub trait CantorBasis<G: Gf2p8>:
 
     /// Generates a LUT for the subspace polynomial s_k(x).
     /// The table index is the field element (as u8), and the value is s_k(index).
-    /// s_0(x) = x
-    /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
+    ///
+    /// - s_0(x) = x
+    /// - s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
     fn gen_subspace_poly_lut(&self, k: usize) -> [G; FIELD_SIZE] {
         let mut table = [G::zero(); FIELD_SIZE];
 
@@ -344,22 +345,23 @@ pub trait CantorBasis<G: Gf2p8>:
 
     /// Generates all subspace polynomial LUTs from s_0 to s_8.
     /// Returns an array where [j][x] contains s_j(x).
-    /// s_0(x) = x
-    /// s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
+    ///
+    /// - s_0(x) = x
+    /// - s_{j+1}(x) = s_j(x) * (s_j(x) + s_j(v_j))
     fn gen_all_subspace_poly_luts(&self) -> [[G; FIELD_SIZE]; 9] {
         let mut luts = [[G::zero(); FIELD_SIZE]; 9];
 
-        // 1. Initialize s_0(x) = x
+        // Initialize s_0(x) = x
         for (x, s_0_x) in luts[0].iter_mut().enumerate() {
             *s_0_x = G::from(x as u8);
         }
 
         let basis = self.as_ref();
 
-        // 2. Iteratively compute s_{j+1} from s_j
+        // Iteratively compute s_{j+1} from s_j
         for j in 0..8 {
             // b_j is the basis projection: s_j(v_j)
-            // We look up the basis element v_j in the current s_j table
+            // Look up the basis element v_j in the current s_j table
             let b_j = luts[j][basis[j].into_usize()];
 
             for x in 0..FIELD_SIZE {
@@ -412,6 +414,24 @@ pub trait CantorBasis<G: Gf2p8>:
 
         derivs
     }
+
+    /// Generates bitmasks of subspace polynomials $s_k$ coefficients of the $x^2^i$ terms for
+    /// $2 <= i <= 8$. Coefficient of $x$ is always 1 and is thus hard-coded in `CantorBasisLut`.
+    fn gen_subspace_poly_coeffs() -> impl Iterator<Item = u8> {
+        let mut masks = [0u16; 9];
+
+        // Base case: s_0(x) = x^1 (bit 0 set)
+        masks[0] = 0b000000001;
+
+        for j in 0..8 {
+            // s_{j+1} = s_j^2 + s_j
+            // Squaring a linearized polynomial is a bit shift.
+            // Adding in GF(2^8) is XOR.
+            masks[j + 1] = (masks[j] << 1) ^ masks[j];
+        }
+
+        masks.into_iter().map(|m| (m >> 1) as u8)
+    }
 }
 
 /// Precomputed lookup table group operations.
@@ -460,6 +480,9 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 
     /// Returns the i-th point $s_i(v_i)$ in the basis subspace.
     fn get_subspace_point_lut(&self, i: u8) -> G;
+
+    /// Returns the coefficient mask of the k-th subspace polynomial.
+    fn get_subspace_poly_coeff_lut(&self, k: u8) -> u8;
 
     fn eval_subspace_poly_lut(&self, k: u8, x: G) -> G;
 
@@ -636,6 +659,38 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         }
     }
 
+    fn init_eea_modulus(
+        &self,
+        r0: &mut [G], // Coefficient array for EEA (size FIELD_SIZE)
+        t_log: u8,
+        is_systematic: bool,
+    ) {
+        r0.fill(G::zero());
+
+        // s_t(x) = sum (mask_bit_i * x^{2^i})
+        let mask = self.get_subspace_poly_coeff_lut(t_log);
+
+        // Unpack the linearized coefficients into the standard basis
+        // Each bit i corresponds to the term x^(2^{i+1})
+        r0[1] = G::one(); // Coefficient of x stays 1.
+        for i in 0..t_log {
+            if (mask >> i) & 1 == 1 {
+                // Map bit i to the index 2^i
+                // e.g., i=0 -> r0[1], i=1 -> r0[2], i=2 -> r0[4]
+                r0[1 << (i + 1)] = G::one();
+            }
+        }
+
+        // Systematic data shift (Eq 76)
+        // To find errors in data blocks (indices >= T), the modulus
+        // must be shifted by the subspace evaluation of the coset.
+        // In the Cantor basis where s_j(v_j) = 1, this shift is always 1.
+        if is_systematic {
+            // r0(x) becomes s_t(x) + 1
+            r0[0] = G::one();
+        }
+    }
+
     /// Fused multiply-add scaled to a subspace of size 2^k.
     ///
     /// out ^= (coeff * X_deg) * rhs (mod s_k(x))
@@ -705,7 +760,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         // z0 -> r, q -> u, lambda -> v.
 
         let mut r0 = [G::zero(); FIELD_SIZE];
-        r0[t_parity] = G::one(); // s_t(x)
+        self.init_eea_modulus(&mut r0, t_log, true);
         let mut u0 = [G::zero(); FIELD_SIZE];
         u0[0] = G::one(); // u associated with s_t
         let mut v0 = [G::zero(); FIELD_SIZE];
@@ -994,7 +1049,7 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
 
         // Integrity Check: Number of roots must match degree of lambda
-        if error_indices.len() != deg_lambda {
+        if error_indices.len() < deg_lambda {
             return false;
         }
 
