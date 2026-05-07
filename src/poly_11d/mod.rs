@@ -551,6 +551,33 @@ mod tests {
             let original = generate_lch_codeword(&bases, t_parity);
             let mut received = original.clone();
 
+            // Corrupt parity
+            for (i, r) in received
+                .iter_mut()
+                .skip(t_parity)
+                .take(t_parity / 2)
+                .enumerate()
+            {
+                *r = (*r).mul((i as u8 + 2).into())
+            }
+
+            assert!(
+                bases.decode_systematic_scalar(&mut received, t_parity),
+                "Failed to decode corrupt data, t_parity = {t_parity}"
+            );
+            assert_eq!(received, original);
+        }
+    }
+
+    #[test]
+    fn recompute_max_corrupt_data() {
+        let bases = BasesLut11d::new();
+
+        for t_log in 1..=7 {
+            let t_parity = 1 << t_log;
+            let original = generate_lch_codeword(&bases, t_parity);
+            let mut received = original.clone();
+
             // Corrupt data
             for (i, r) in received
                 .iter_mut()

@@ -761,6 +761,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 
         let mut r0 = [G::zero(); FIELD_SIZE];
         self.init_eea_modulus(&mut r0, t_log, true);
+        println!("r0={:?}", r0.iter().map(|&x| x.into()).collect::<Vec<u8>>());
         let mut u0 = [G::zero(); FIELD_SIZE];
         u0[0] = G::one(); // u associated with s_t
         let mut v0 = [G::zero(); FIELD_SIZE];
@@ -1038,15 +1039,30 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         let deg_lambda = lambda_coeffs.degree();
 
         // Step 3: Find error locations (roots)
-        let mut lambda_evals = lambda_coeffs; // Copy
-        self.fft_scalar(&mut lambda_evals, n_log, G::zero());
-
         let mut error_indices = Vec::with_capacity(deg_lambda);
-        for (i, &eval) in lambda_evals.iter().take(n).enumerate() {
-            if eval == G::zero() {
-                error_indices.push(i);
+
+        for chunk_idx in 0..(n / t_parity) {
+            let beta = self.get_subspace_point_lut((chunk_idx * t_parity) as u8);
+            let mut chunk_evals = lambda_coeffs;
+            self.fft_scalar(&mut chunk_evals[..t_parity], t_log, beta);
+
+            println!(
+                "chunk_idx={chunk_idx}, chunk_evals={:?}",
+                chunk_evals.iter().map(|&x| x.into()).collect::<Vec<u8>>()
+            );
+
+            for (offset, &eval) in chunk_evals.iter().take(t_parity).enumerate() {
+                if eval == G::zero() {
+                    error_indices.push(chunk_idx * t_parity + offset);
+                }
             }
         }
+
+        println!(
+            "t_parity={t_parity}, deg_lambda={deg_lambda}, lambda_coeffs={:?}",
+            lambda_coeffs.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
+            // lambda_evals.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
+        );
 
         // Integrity Check: Number of roots must match degree of lambda
         if error_indices.len() < deg_lambda {
