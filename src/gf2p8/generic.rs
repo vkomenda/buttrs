@@ -790,6 +790,128 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         // Result: r1 is remainder, u1 is numerator q(x), v1 is locator lambda(x)
         (u1, v1)
     }
+
+    fn solve_key_equation(&self, syndrome: &[G], t_log: u8) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
+        let mut st = [G::zero(); FIELD_SIZE];
+        self.init_subspace_poly_coeffs(&mut st, t_log);
+        let (qt, rt) = self.poly_div(&st, syndrome);
+        let (u1, v1, z1) = self.solve_eea(syndrome, &rt, t_log);
+        let lambda = self.poly_add(&u1, &self.poly_mul(&v1, &qt));
+
+        (z1, lambda)
+    }
+
+    fn solve_eea(
+        &self,
+        a: &[G], // syndrome
+        b: &[G], // remainder r_t(x) from the initial division
+        t_log: u8,
+    ) -> ([G; FIELD_SIZE], [G; FIELD_SIZE], [G; FIELD_SIZE]) {
+        let t_parity = 1 << t_log;
+        let target_deg = t_parity / 2; // Stop when deg(z) < T/2
+
+        // Initial state
+        let mut z0 = [G::zero(); FIELD_SIZE];
+        z0.copy_from_slice(a);
+        let mut z1 = [G::zero(); FIELD_SIZE];
+        z1.copy_from_slice(b);
+
+        let mut u0 = [G::zero(); FIELD_SIZE];
+        u0[0] = G::one();
+        let mut u1 = [G::zero(); FIELD_SIZE];
+
+        let mut v0 = [G::zero(); FIELD_SIZE];
+        let mut v1 = [G::zero(); FIELD_SIZE];
+        v1[0] = G::one();
+
+        while z1.degree() >= target_deg {
+            let (q, remainder) = self.poly_div(&z0, &z1);
+
+            // Update r: r = r0 - q * r1
+            z0 = z1;
+            z1 = remainder;
+
+            // Update u: u = u0 - q * u1
+            let q_u1 = self.poly_mul(&q, &u1);
+            let next_u = self.poly_add(&u0, &q_u1);
+            u0 = u1;
+            u1 = next_u;
+
+            // Update v: v = v0 - q * v1
+            let q_v1 = self.poly_mul(&q, &v1);
+            let next_v = self.poly_add(&v0, &q_v1);
+            v0 = v1;
+            v1 = next_v;
+        }
+
+        // LNH page 9:
+        // u1 = u auxiliary, v1 = v auxiliary, r1 = z error evaluator
+        (u1, v1, z1)
+    }
+
+    fn init_subspace_poly_coeffs(&self, st: &mut [G], t_log: u8) {
+        st.fill(G::zero());
+
+        // s_t(x) = sum (mask_bit_i * x^{2^i})
+        let mask = self.get_subspace_poly_coeff_lut(t_log);
+
+        // Unpack the linearized coefficients into the standard basis
+        // Each bit i corresponds to the term x^(2^{i+1})
+        st[1] = G::one(); // Coefficient of x stays 1.
+        for i in 0..t_log {
+            if (mask >> i) & 1 == 1 {
+                // Map bit i to the index 2^i
+                // e.g., i=0 -> r0[1], i=1 -> r0[2], i=2 -> r0[4]
+                st[1 << (i + 1)] = G::one();
+            }
+        }
+    }
+
+    /// Synthetic division in the X basis.
+    /// s_t(x) = q_t(x) * s(x) + r_t(x)
+    fn poly_div(&self, a: &[G], b: &[G]) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
+        let a_deg = a.degree();
+        let mut r = [G::zero(); FIELD_SIZE];
+        r.copy_from_slice(a);
+        let mut q = [G::zero(); FIELD_SIZE];
+        let b_deg = b.degree();
+        let b_lc_inv = b[b_deg].inv_lut();
+
+        for i in (b_deg..a_deg + 1).rev() {
+            let factor = r[i].mul(b_lc_inv);
+            q[i - b_deg] = factor;
+            for j in 0..=b_deg {
+                r[i - b_deg + j] = r[i - b_deg + j].add(factor.mul(b[j]));
+            }
+        }
+        (q, r)
+    }
+
+    /// Polynomial multiplication in the X basis.
+    fn poly_mul(&self, a: &[G], b: &[G]) -> [G; FIELD_SIZE] {
+        let mut res = [G::zero(); FIELD_SIZE];
+
+        for (i, &ai) in a.iter().enumerate() {
+            if ai == G::zero() {
+                continue;
+            }
+            for (j, &bj) in b.iter().enumerate() {
+                res[i + j] = res[i + j].add(ai.mul(bj));
+            }
+        }
+        res
+    }
+
+    fn poly_add(&self, a: &[G], b: &[G]) -> [G; FIELD_SIZE] {
+        let mut res = [G::zero(); FIELD_SIZE];
+        res.copy_from_slice(a);
+
+        for (ai, bi) in res.iter_mut().zip(b.iter()) {
+            *ai = ai.add(*bi);
+        }
+
+        res
+    }
 }
 
 /// Computes the formal derivative of a polynomial in the basis X.
@@ -905,12 +1027,10 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         &self,
         received: &[G], // Size n (e.g., 256)
         t_log: u8,      // log_2(T)
-    ) -> Vec<G> {
+    ) -> [G; FIELD_SIZE] {
         let t_parity = 1 << t_log;
         // Reserve the extra bit for the key equation solver (EEA requirement).
-        let mut syndrome = vec![G::zero(); t_parity + 1];
-
-        // Workspace on stack to avoid heap allocation.
+        let mut syndrome = [G::zero(); FIELD_SIZE];
         let mut workspace = [G::zero(); FIELD_SIZE];
 
         for (i, chunk) in received.chunks(t_parity).enumerate() {
@@ -1028,13 +1148,18 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         // Step 1: Syndrome calculation
         let syndrome = self.compute_syndrome_scalar(received, t_log);
 
+        println!(
+            "t_parity={t_parity}, syndrome={:?}",
+            syndrome.iter().map(|&s| s.into()).collect::<Vec<u8>>()
+        );
+
         // No errors occurred.
         if syndrome.iter().take(t_parity).all(|&c| c == G::zero()) {
             return true;
         }
 
         // Step 2: Solve the key equation (EEA)
-        let (q_coeffs, lambda_coeffs) = self.solve_key_equation_eea(&syndrome, t_log);
+        let (q_coeffs, lambda_coeffs) = self.solve_key_equation(&syndrome, t_log);
 
         let deg_lambda = lambda_coeffs.degree();
 
