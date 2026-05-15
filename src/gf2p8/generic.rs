@@ -818,9 +818,9 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         let mut st = [G::zero(); FIELD_SIZE];
         self.init_subspace_poly_coeffs(&mut st, t_log);
         let (qt, rt) = self.poly_div_lnh(&st, syndrome)?;
-        let (u1, v1, z1) = self.solve_eea(syndrome, &rt, t_log);
+        let (u1, v1, _z1) = self.solve_eea(syndrome, &rt, t_log);
         let lambda = self.poly_add(&u1, &self.poly_mul_lnh(&v1, &qt));
-        Some((z1, lambda))
+        Some((v1, lambda))
     }
 
     fn solve_eea(
@@ -874,20 +874,20 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
 
     fn init_subspace_poly_coeffs(&self, st: &mut [G], t_log: u8) {
         st.fill(G::zero());
+        st[1 << t_log] = G::one(); // Coefficient of x stays 1.
 
-        // s_t(x) = sum (mask_bit_i * x^{2^i})
-        let mask = self.get_subspace_poly_coeff_lut(t_log);
+        // // s_t(x) = sum (mask_bit_i * x^{2^i})
+        // let mask = self.get_subspace_poly_coeff_lut(t_log);
 
-        // Unpack the linearized coefficients into the standard basis
-        // Each bit i corresponds to the term x^(2^{i+1})
-        st[1] = G::one(); // Coefficient of x stays 1.
-        for i in 0..t_log {
-            if (mask >> i) & 1 == 1 {
-                // Map bit i to the index 2^i
-                // e.g., i=0 -> r0[1], i=1 -> r0[2], i=2 -> r0[4]
-                st[1 << (i + 1)] = G::one();
-            }
-        }
+        // // Unpack the linearized coefficients into the standard basis
+        // // Each bit i corresponds to the term x^(2^{i+1})
+        // for i in 0..t_log {
+        //     if (mask >> i) & 1 == 1 {
+        //         // Map bit i to the index 2^i
+        //         // e.g., i=0 -> r0[1], i=1 -> r0[2], i=2 -> r0[4]
+        //         st[1 << (i + 1)] = G::one();
+        //     }
+        // }
     }
 
     /// Division in the monomial basis.

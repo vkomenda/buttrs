@@ -524,6 +524,9 @@ mod tests {
                 *r = (*r).mul((i as u8 + 2).into())
             }
 
+            println!("original codeword {original:?}");
+            println!("corrupted codeword {received:?}");
+
             assert!(
                 bases.decode_systematic_scalar(&mut received, t_parity),
                 "Failed to decode corrupt parity, t_parity = {t_parity}"
