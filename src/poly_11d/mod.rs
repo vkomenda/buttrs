@@ -747,10 +747,22 @@ mod tests {
             let s_k_minus_1_v_k_minus_1 = bases.eval_subspace_poly_lut(k - 1, v_k_minus_1);
             let k_minus_1 = k - 1;
             println!(
-                "s_{k_minus_1}(v_{k}) = {:?}, s_{k_minus_1}(v_{k_minus_1}) = {:?}",
-                s_k_minus_1_v_k, s_k_minus_1_v_k_minus_1
+                "s_{k_minus_1}(v_{k_minus_1}) = {:?}, s_{k_minus_1}(v_{k}) = {:?}",
+                s_k_minus_1_v_k_minus_1, s_k_minus_1_v_k,
             );
-            assert_ne!(s_k_minus_1_v_k, s_k_minus_1_v_k_minus_1);
+            assert_ne!(s_k_minus_1_v_k_minus_1, s_k_minus_1_v_k);
         }
+    }
+
+    #[test]
+    fn subspace_poly_trace() {
+        let bases = BasesLut11d::new();
+        let p2: Vec<u8> = (0..8).map(|i| 2u8.pow(i)).collect();
+
+        let points: Vec<_> = p2
+            .iter()
+            .map(|&p| u8::from(bases.get_subspace_point_lut(p)))
+            .collect();
+        assert_eq!(points, [231, 88, 200, 86, 146, 152, 214, 1]);
     }
 }
