@@ -270,46 +270,6 @@ pub trait CantorBasis<G: Gf2p8>:
         span
     }
 
-    // FIXME: Broken!
-    //
-    // /// Generates the compact LUT for the subspace polynomial s_k(x).
-    // /// The const K is the table size 2^(8-k). the level index k is derived as 8 - log2(K).
-    // fn gen_compact_subspace_poly_lut<const K: usize>(&self) -> [G; K] {
-    //     let log2_k = K.trailing_zeros() as usize;
-    //     let k = 8 - log2_k;
-
-    //     let mut table = [G::zero(); K];
-    //     let basis = self.as_ref();
-
-    //     // Pre-compute projections b_l = s_l(v_l) for l < k.
-    //     // These are the basis point projections required to evaluate s_k.
-    //     let mut basis_image = [G::from(0u8); 8];
-    //     let mut w = basis.to_vec();
-    //     for l in 0..k {
-    //         let b_l = w[l];
-    //         basis_image[l] = b_l;
-    //         for w_j in w.iter_mut().take(k).skip(l + 1) {
-    //             // s_{l+1}(v_j) = s_l(v_j) * (s_l(v_j) + s_l(v_l))
-    //             *w_j = w_j.mul(w_j.add(b_l));
-    //         }
-    //     }
-
-    //     // Compute s_k(X_{r << k}) for all r in the compressed range.
-    //     for r in 0..K {
-    //         // We evaluate s_k only at coset representatives of the subspace V_k.
-    //         // These are points where the lower k bits are zero.
-    //         let mut val = self.get_subspace_point((r << k) as u8);
-
-    //         // Apply the chain of subspace polynomials s_0 -> s_1 -> ... -> s_k
-    //         for &b_l in basis_image.iter().take(k) {
-    //             val = val.mul(val.add(b_l));
-    //         }
-    //         table[r] = val;
-    //     }
-
-    //     table
-    // }
-
     /// Generates a LUT for the subspace polynomial s_k(x).
     /// The table index is the field element (as u8), and the value is s_k(index).
     ///
@@ -430,14 +390,6 @@ pub trait CantorBasis<G: Gf2p8>:
         }
 
         masks.into_iter().map(|m| (m >> 1) as u8)
-    }
-
-    /// Generate the monomial coefficients of the standard form of a ring basis polynomial X_i,
-    /// for 0 <= i < 256.
-    fn gen_ring_basis_poly_coeffs(&self, i: u8) -> [G; FIELD_SIZE] {
-        // Select the subspace poly terms s_k
-        for j in 0..8 {}
-        todo!()
     }
 }
 
@@ -635,46 +587,6 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         }
     }
 
-    /*
-    /// Performs A = Q * B + R in Basis X.
-    fn poly_div_rem<I, O>(&self, dividend: I, divisor: I, mut quotient: O, mut remainder: O, k: u8)
-    where
-        I: AsRef<[G]>,
-        O: AsMut<[G]> + AsRef<[G]>,
-    {
-        let d_lc_inv = divisor.leading_coeff().inv_lut();
-        let d_deg = divisor.degree();
-
-        quotient.as_mut().fill(G::zero());
-        remainder.as_mut().fill(G::zero());
-
-        let src = dividend.as_ref();
-        remainder.as_mut()[..src.len()].copy_from_slice(src);
-
-        // Synthetic division loop
-        loop {
-            let (deg, lc) = {
-                let deg = remainder.as_ref().degree();
-                if deg < d_deg {
-                    break;
-                }
-                let lc = remainder.leading_coeff();
-                if lc == G::zero() {
-                    break;
-                }
-                (deg, lc)
-            };
-            // q_term = (LC(R) / LC(B)) * X_{r_deg - d_deg}
-            let q_coeff = lc.mul(d_lc_inv);
-            let deg_diff = deg - d_deg;
-            quotient.as_mut()[deg_diff] = q_coeff;
-
-            // R = R - (q_coeff * X_deg_diff * B)
-            self.poly_fused_mul_add(remainder.as_mut(), divisor.as_ref(), q_coeff, deg_diff, k);
-        }
-    }
-    */
-
     /// Fused multiply-add scaled to a subspace of size 2^k.
     ///
     /// out ^= (coeff * X_deg) * rhs (mod s_k(x))
@@ -720,62 +632,6 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
             *o = o.add(*t);
         }
     }
-
-    /*
-    /// Step 2 of decoding: key equation solver via extended Euclidean algorithm.
-    /// Solves: z_0(x) = s(x)λ(x) + q(x)s_t(x)
-    ///
-    /// # Arguments
-    /// * `syndrome` - Input syndrome polynomial.
-    /// * `t_log`    - log_2 of the parity size T (subspace dimension).
-    ///
-    /// # Returns
-    /// * `.0` - Coeffcients of the Quotient Polynomial q.
-    /// * `.1` - Coeficients of the Error Locator Polynomial λ.
-    fn solve_key_equation_eea(
-        &self,
-        syndrome: &[G], // Size T
-        t_log: u8,
-    ) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
-        let t_parity = 1 << t_log;
-        let t_half = t_parity / 2;
-        let k_arith = t_log + 1; // Arithmetic headroom
-
-        // r = u * s_t + v * s
-        // z0 -> r, q -> u, lambda -> v.
-
-        let mut r0 = [G::zero(); FIELD_SIZE];
-        self.init_eea_modulus(&mut r0, t_log, true);
-        println!("r0={:?}", r0.iter().map(|&x| x.into()).collect::<Vec<u8>>());
-        let mut u0 = [G::zero(); FIELD_SIZE];
-        u0[0] = G::one(); // u associated with s_t
-        let mut v0 = [G::zero(); FIELD_SIZE];
-
-        let mut r1 = [G::zero(); FIELD_SIZE];
-        r1[..syndrome.len()].copy_from_slice(syndrome);
-        let mut u1 = [G::zero(); FIELD_SIZE];
-        let mut v1 = [G::zero(); FIELD_SIZE];
-        v1[0] = G::one(); // v associated with s
-
-        while r1.degree() >= t_half {
-            let q_coeff = r0.leading_coeff().mul(r1.leading_coeff().inv_lut());
-            let deg_diff = r0.degree() - r1.degree();
-
-            // Update all three: remainder and both auxiliaries
-            self.poly_fused_mul_add(&mut r0, r1, q_coeff, deg_diff, k_arith);
-            self.poly_fused_mul_add(&mut u0, u1, q_coeff, deg_diff, k_arith);
-            self.poly_fused_mul_add(&mut v0, v1, q_coeff, deg_diff, k_arith);
-
-            if r0.degree() < r1.degree() {
-                r0.swap_with_slice(&mut r1);
-                u0.swap_with_slice(&mut u1);
-                v0.swap_with_slice(&mut v1);
-            }
-        }
-        // Result: r1 is remainder, u1 is numerator q(x), v1 is locator lambda(x)
-        (u1, v1)
-    }
-    */
 
     fn solve_key_equation_eea(
         &self,
@@ -847,23 +703,16 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     /// Division in the monomial basis.
     /// s_t(x) = q_t(x) * s(x) + r_t(x)
     fn poly_div_mon(&self, a: &[G], b: &[G]) -> Option<([G; FIELD_SIZE], [G; FIELD_SIZE])> {
-        let a_deg = a.degree();
-        if a_deg.is_none() {
+        let a_deg = if let Some(deg) = a.degree() {
+            deg
+        } else {
             return Some(([G::zero(); FIELD_SIZE], [G::zero(); FIELD_SIZE]));
-        }
-        let a_deg = a_deg.unwrap();
+        };
 
         let mut r = [G::zero(); FIELD_SIZE];
         r.copy_from_slice(a);
         let mut q = [G::zero(); FIELD_SIZE];
-        let b_deg = b.degree();
-
-        // Division by 0
-        if b_deg.is_none() {
-            return None;
-        }
-        let b_deg = b_deg.unwrap();
-
+        let b_deg = b.degree()?;
         let b_lc_inv = b[b_deg].inv_lut();
 
         for i in (b_deg..a_deg + 1).rev() {
@@ -913,18 +762,17 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     ///
     /// As defined in Appendix A of the LNH paper.
     fn poly_mul_lnh(&self, a: &[G; FIELD_SIZE], b: &[G; FIELD_SIZE]) -> [G; FIELD_SIZE] {
-        let deg_a = a.degree();
-
-        if deg_a.is_none() {
+        let deg_a = if let Some(deg) = a.degree() {
+            deg
+        } else {
             return [G::zero(); FIELD_SIZE];
-        }
-        let deg_a = deg_a.unwrap();
+        };
 
-        let deg_b = b.degree();
-        if deg_b.is_none() {
+        let deg_b = if let Some(deg) = b.degree() {
+            deg
+        } else {
             return [G::zero(); FIELD_SIZE];
-        }
-        let deg_b = deg_b.unwrap();
+        };
 
         // Determine the smallest power-of-2 size n >= deg_a + deg_b + 1
         let n = (deg_a + deg_b + 1).next_power_of_two();
@@ -992,9 +840,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         let mut lo = [G::zero(); FIELD_SIZE];
         let mut hi = [G::zero(); FIELD_SIZE];
         lo[..pivot].copy_from_slice(&p[..pivot]);
-        for i in pivot..FIELD_SIZE {
-            hi[i - pivot] = p[i];
-        }
+        hi[..FIELD_SIZE - pivot].copy_from_slice(&p[pivot..]);
         (lo, hi)
     }
 
@@ -1005,9 +851,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     fn poly_shift_up(&self, p: &[G; FIELD_SIZE], k: u8) -> [G; FIELD_SIZE] {
         let shift = 1usize << k;
         let mut out = [G::zero(); FIELD_SIZE];
-        for i in 0..FIELD_SIZE - shift {
-            out[i + shift] = p[i];
-        }
+        out[shift..].copy_from_slice(&p[..FIELD_SIZE - shift]);
         out
     }
 
@@ -1287,8 +1131,6 @@ pub trait LchBasisLut<G: Gf2p8Lut>: CantorBasisLut<G> {
 
     /// $\overline{D}_h (x)$
     fn eval_transform_domain_poly(&self, coeffs: &[G], x: G) -> G {
-        // debug_assert!((0..=8).any(|k| coeffs.len() == 2usize.pow(k) - 1));
-        // let k = coeffs.len().trailing_zeros() as usize;
         let mut result: G = G::zero();
 
         for (i, d) in coeffs.iter().enumerate() {
