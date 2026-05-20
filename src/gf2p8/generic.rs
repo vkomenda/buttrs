@@ -1,4 +1,5 @@
 use super::bit_matrix::BitMatrix;
+use core::mem::MaybeUninit;
 
 pub const FIELD_SIZE: usize = 256;
 pub const EXP_TABLE_SIZE: usize = FIELD_SIZE * 2 - 2;
@@ -130,6 +131,13 @@ pub trait Gf2p8: Sized + Copy + From<u8> + Into<u8> + PartialEq {
         }
 
         m.transpose()
+    }
+
+    // TODO: vectorized ops need to move to a dedicated trait.
+    fn shard_add(a: &mut [Self], b: &[Self]) {
+        for (x, y) in a.iter_mut().zip(b) {
+            *x = x.add(*y);
+        }
     }
 }
 
@@ -415,6 +423,12 @@ pub trait Gf2p8Lut: Gf2p8 {
             *byte = self.mul_lut(Self::from(*byte)).into();
         }
     }
+
+    /// Precompute the 256-entry multiply table for a fixed scalar once per
+    /// butterfly level.
+    fn make_mul_lut(self) -> [Self; 256] {
+        std::array::from_fn(|i| self.mul_lut(Self::from(i as u8)))
+    }
 }
 
 /// Precompted lookup table operations on the Cantor basis subspace.
@@ -537,6 +551,54 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
         }
     }
 
+    fn fft_sharded(&self, shards: &mut [&mut [G]], k: u8, beta: G) {
+        if k == 0 {
+            return;
+        }
+        let half = 1 << (k - 1);
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+        let lut = twiddle.make_mul_lut();
+
+        // Butterfly with one lut computed for the whole pass
+        for i in 0..half {
+            let (left, right) = shards.split_at_mut(i + half);
+            // Forward butterfly
+            for (ai, bi) in left[i].iter_mut().zip(right[0].iter_mut()) {
+                let t = lut[bi.into_usize()]; //  T * b
+                *ai = ai.add(t); //  g0 = a + T*b
+                *bi = bi.add(*ai); //  g1 = g0 + b
+            }
+        }
+
+        let next_beta = beta.add(self.get_basis_point_lut(k - 1));
+        self.fft_sharded(&mut shards[..half], k - 1, beta);
+        self.fft_sharded(&mut shards[half..], k - 1, next_beta);
+    }
+
+    fn ifft_sharded(&self, shards: &mut [&mut [G]], k: u8, beta: G) {
+        if k == 0 {
+            return;
+        }
+        let half = 1 << (k - 1);
+
+        let next_beta = beta.add(self.get_basis_point_lut(k - 1));
+        self.ifft_sharded(&mut shards[..half], k - 1, beta);
+        self.ifft_sharded(&mut shards[half..], k - 1, next_beta);
+
+        let twiddle = self.eval_subspace_poly_lut(k - 1, beta);
+        let lut = twiddle.make_mul_lut();
+
+        for i in 0..half {
+            let (left, right) = shards.split_at_mut(i + half);
+            for (ai, bi) in left[i].iter_mut().zip(right[0].iter_mut()) {
+                let t = lut[bi.into_usize()];
+                *bi = bi.add(*ai); //  d' = g0 + g1
+                *ai = ai.add(t); //  d  = g0 + T*d'
+            }
+        }
+    }
+
+    /*
     fn fft_sharded(&self, shards: &mut [&mut [u8]], k: u8, beta: G) {
         if k == 0 {
             return;
@@ -586,6 +648,7 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
             }
         }
     }
+    */
 
     /// Fused multiply-add scaled to a subspace of size 2^k.
     ///
@@ -1143,24 +1206,6 @@ pub trait LchBasisLut<G: Gf2p8Lut>: CantorBasisLut<G> {
 }
 
 pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
-    /// Systematic Reed-Solomon encoding: The message stays the same. Only parity is modified.
-    ///
-    /// This method is for the special case when the number of message shards equals the number of
-    /// parity shards, and is a power of 2.
-    fn encode_systematic(&self, message_shards: &[&[u8]], parity_shards: &mut [&mut [u8]]) {
-        let num_parity = parity_shards.len();
-        let log_num_parity = num_parity.trailing_zeros() as u8;
-
-        // TODO: this can be done by the caller, in which case only the mut buffer is required.
-        for (m_shard, p_shard) in message_shards.iter().zip(parity_shards.iter_mut()) {
-            p_shard.copy_from_slice(m_shard);
-        }
-
-        let beta = self.get_subspace_point_lut(num_parity as u8);
-        self.ifft_sharded(parity_shards, log_num_parity, beta);
-        self.fft_sharded(parity_shards, log_num_parity, G::zero());
-    }
-
     fn encode_systematic_scalar(&self, message: &[G], parity: &mut [G]) {
         let t_parity = parity.len();
         let t_log = t_parity.trailing_zeros() as u8;
@@ -1179,6 +1224,43 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
 
         // Compute parity (v0)
         self.fft_scalar(parity, t_log, G::zero());
+    }
+
+    fn encode_systematic_sharded(&self, message: &[&[G]], parity: &mut [&mut [G]]) {
+        let t_parity = parity.len();
+        let t_log = t_parity.trailing_zeros() as u8;
+        let shard_len = parity[0].len();
+
+        for shard in parity.iter_mut() {
+            shard.fill(G::zero());
+        }
+
+        // TODO: accept the workspace or the backing store as a fn argument
+        let mut backing = vec![G::zero(); t_parity * shard_len];
+
+        // Fixed-size header array on the stack: FIELD_SIZE/2 × 16 bytes = 2 KB,
+        // regardless of shard size or t_parity.
+        let mut hdrs: [MaybeUninit<&mut [G]>; FIELD_SIZE / 2] =
+            unsafe { MaybeUninit::uninit().assume_init() };
+
+        for (i, chunk) in backing.chunks_mut(shard_len).enumerate() {
+            hdrs[i].write(chunk);
+        }
+
+        let workspace: &mut [&mut [G]] =
+            unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut &mut [G], t_parity) };
+        for i in 0..message.len() / t_parity {
+            for j in 0..t_parity {
+                workspace[j].copy_from_slice(&message[i * t_parity + j]);
+            }
+            let omega = self.get_subspace_point_lut(((i + 1) * t_parity) as u8);
+            self.ifft_sharded(workspace, t_log, omega);
+            for j in 0..t_parity {
+                G::shard_add(&mut parity[j], &workspace[j]);
+            }
+        }
+
+        self.fft_sharded(parity, t_log, G::zero());
     }
 
     /// Syndrome calculation (scalar).
@@ -1220,51 +1302,6 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
 
         syndrome
-    }
-
-    /// Computes the syndrome $\mathbf{s}(x)$ per LCH formalism:
-    /// Parity shards are at the beginning (indices 0..T-1).
-    ///
-    /// # Arguments
-    /// * `received_shards` - Full array of n shards [parity_0..parity_{T-1}, data_0..data_{k-1}]
-    /// * `syndrome_shards` - Output buffer of size T (coefficients of s(x))
-    /// * `scratchpad`      - Workspace of size T shards
-    fn compute_syndrome_sharded(
-        &self,
-        received_shards: &[&[u8]],
-        syndrome_shards: &mut [&mut [u8]],
-        scratchpad: &mut [&mut [u8]],
-    ) {
-        let t_parity = syndrome_shards.len(); // T = 2^t
-        let t_log = t_parity.trailing_zeros() as u8;
-
-        for s in syndrome_shards.iter_mut() {
-            s.fill(0);
-        }
-
-        // Equation (67): s = sum_{i=0}^{n/T - 1} IFFT(r_i, t, omega_{i*T})
-        // i=0 corresponds to the parity chunk (v_0)
-        for (i, r_chunk) in received_shards.chunks(t_parity).enumerate() {
-            let omega_idx = i * t_parity;
-            // omega_{i * T}
-            let omega = self.get_subspace_point_lut(omega_idx as u8);
-
-            for s in scratchpad.iter_mut() {
-                s.fill(0);
-            }
-            for (src, dst) in r_chunk.iter().zip(scratchpad.iter_mut()) {
-                dst.copy_from_slice(src);
-            }
-
-            self.ifft_sharded(scratchpad, t_log, omega);
-
-            // Linearity of IFFT allows to sum in the coefficient domain
-            for (s_shard, temp_shard) in syndrome_shards.iter_mut().zip(scratchpad.iter()) {
-                for (s_byte, t_byte) in s_shard.iter_mut().zip(temp_shard.iter()) {
-                    *s_byte ^= *t_byte;
-                }
-            }
-        }
     }
 
     /// Recomputes data from parity when $n = 2T$.

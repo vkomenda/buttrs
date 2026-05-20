@@ -266,6 +266,33 @@ mod tests {
         codeword
     }
 
+    fn generate_sharded_lch_codeword(
+        bases: &BasesLut11d,
+        t_parity: usize,
+        shard_len: usize,
+    ) -> Vec<Vec<Gf2p8_11d>> {
+        let mut message = vec![vec![Gf2p8_11d::zero(); shard_len]; t_parity];
+        let mut parity = vec![vec![Gf2p8_11d::zero(); shard_len]; t_parity];
+
+        for i in 0..t_parity {
+            for j in 0..shard_len {
+                message[i][j] = Gf2p8_11d::from((t_parity + i + j) as u8);
+            }
+        }
+
+        let message_slices: Vec<&[Gf2p8_11d]> =
+            message.iter().map(|shard| shard.as_ref()).collect();
+        let mut parity_slices: Vec<&mut [Gf2p8_11d]> =
+            parity.iter_mut().map(|shard| shard.as_mut()).collect();
+
+        bases.encode_systematic_sharded(&message_slices, &mut parity_slices);
+
+        let mut codeword = vec![vec![Gf2p8_11d::zero(); shard_len]; 2 * t_parity];
+        codeword[..t_parity].clone_from_slice(&parity);
+        codeword[t_parity..].clone_from_slice(&message);
+        codeword
+    }
+
     // #[test]
     // fn reconstruct_success_max_erasures() {
     //     let shard_len = 64;
@@ -764,5 +791,21 @@ mod tests {
             .map(|&p| u8::from(bases.get_subspace_point_lut(p)))
             .collect();
         assert_eq!(points, [1, 214, 152, 146, 86, 200, 88, 231]);
+    }
+
+    #[test]
+    fn encode_sharded_writes_parity() {
+        const SHARD_LEN: usize = 32;
+
+        let bases = BasesLut11d::new();
+
+        for t_log in 1..8 {
+            let t_parity = 1 << t_log;
+            let codeword = generate_sharded_lch_codeword(&bases, t_parity, SHARD_LEN);
+            // Verify that the parity shards have been written into.
+            for j in 0..t_parity {
+                assert_ne!(codeword[j], vec![Gf2p8_11d::zero(); SHARD_LEN]);
+            }
+        }
     }
 }
