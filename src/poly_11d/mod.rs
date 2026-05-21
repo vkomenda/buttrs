@@ -64,7 +64,7 @@ mod tests {
         encode, fft_recursive,
         gf2p8::{
             CantorBasis, CantorBasis11d, Gf2p8,
-            generic::{Codec, FIELD_SIZE, PolyOps, deriv_poly, deriv_poly_iterative},
+            generic::{Codec, FIELD_SIZE, PolyOps},
         },
         ifft_recursive, reconstruct_systematic,
     };
@@ -293,48 +293,6 @@ mod tests {
         codeword
     }
 
-    // #[test]
-    // fn reconstruct_success_max_erasures() {
-    //     let shard_len = 64;
-    //     let original_codeword = generate_test_codeword(shard_len);
-    //     let basis = BasesLut11d::new();
-    //     let twiddles = &basis.twiddle_factors[2..];
-
-    //     // Simulate receiving exactly 32 shards (0..16 data and 32..48 parity)
-    //     let mut received = Vec::new();
-    //     for i in 0..16 {
-    //         received.push((i as u8, original_codeword[i].as_slice()));
-    //     }
-    //     for i in 32..48 {
-    //         received.push((i as u8, original_codeword[i].as_slice()));
-    //     }
-
-    //     // Setup workspace
-    //     let mut workspace_data = vec![vec![0u8; shard_len]; 64];
-    //     let mut workspace: Vec<&mut [u8]> = workspace_data
-    //         .iter_mut()
-    //         .map(|s| s.as_mut_slice())
-    //         .collect();
-
-    //     // Reconstruct
-    //     let success =
-    //         reconstruct_systematic::<64, Gf2p8_11d>(&received, &mut workspace, twiddles, &basis);
-
-    //     assert!(success, "Reconstruction should have succeeded");
-
-    //     // Verify a missing data shard
-    //     assert_eq!(
-    //         workspace[20], original_codeword[20],
-    //         "Data shard 20 mismatch"
-    //     );
-
-    //     // Verify a missing parity shard
-    //     assert_eq!(
-    //         workspace[50], original_codeword[50],
-    //         "Parity shard 50 mismatch"
-    //     );
-    // }
-
     #[test]
     fn reconstruct_no_erasures() {
         let shard_len = 8;
@@ -423,69 +381,6 @@ mod tests {
                 .all(|d| *d == Gf2p8_11d::one())
         );
     }
-
-    #[test]
-    fn deriv_basic() {
-        type G = Gf2p8_11d;
-        let mut out = [G::zero(); 4];
-        let mut out_it = out;
-
-        // p1 = x
-        let p1 = [G::zero(), G::one(), G::zero(), G::zero()];
-        deriv_poly(&p1, &mut out, 2);
-        assert_eq!(out, [G::one(), G::zero(), G::zero(), G::zero()]);
-
-        out_it.fill(G::zero());
-        deriv_poly_iterative(&p1, &mut out_it);
-        assert_eq!(out_it, out);
-
-        // p2 = x^2 + x
-        let p2 = [G::zero(), G::zero(), G::one(), G::zero()];
-        deriv_poly(&p2, &mut out, 2);
-        assert_eq!(out, [G::one(), G::zero(), G::zero(), G::zero()]);
-
-        out_it.fill(G::zero());
-        deriv_poly_iterative(&p2, &mut out_it);
-        assert_eq!(out_it, out);
-
-        // p3(x) = x^3 + x^2
-        // monomial derivative: 3x^2 + 2x = x^2 in GF(2)
-        // LCH basis: x^2 = (x^2 + x) + x = p1 + p2
-        let p3 = [G::zero(), G::zero(), G::zero(), G::one()];
-        deriv_poly(&p3, &mut out, 2);
-        assert_eq!(out, [G::zero(), G::one(), G::one(), G::zero()]);
-
-        out_it.fill(G::zero());
-        deriv_poly_iterative(&p3, &mut out_it);
-        assert_eq!(out_it, out);
-    }
-
-    // #[test]
-    // fn all_compact_subspace_poly_luts() {
-    //     let basis = CantorBasis11d::new();
-    //     let print_lut = |k, it| {
-    //         println!("{k}-th compact LUT: {:?}", unwrap_gfs(it));
-    //     };
-    //     let lut0 = basis.gen_compact_subspace_poly_lut::<256>();
-    //     let lut1 = basis.gen_compact_subspace_poly_lut::<128>();
-    //     let lut2 = basis.gen_compact_subspace_poly_lut::<64>();
-    //     let lut3 = basis.gen_compact_subspace_poly_lut::<32>();
-    //     let lut4 = basis.gen_compact_subspace_poly_lut::<16>();
-    //     let lut5 = basis.gen_compact_subspace_poly_lut::<8>();
-    //     let lut6 = basis.gen_compact_subspace_poly_lut::<4>();
-    //     let lut7 = basis.gen_compact_subspace_poly_lut::<2>();
-    //     let lut8 = basis.gen_compact_subspace_poly_lut::<1>();
-
-    //     print_lut(0, lut0.iter());
-    //     print_lut(1, lut1.iter());
-    //     print_lut(2, lut2.iter());
-    //     print_lut(3, lut3.iter());
-    //     print_lut(4, lut4.iter());
-    //     print_lut(5, lut5.iter());
-    //     print_lut(6, lut6.iter());
-    //     print_lut(7, lut7.iter());
-    //     print_lut(8, lut8.iter());
-    // }
 
     #[test]
     fn normalization_factors_id() {
@@ -827,7 +722,7 @@ mod tests {
 
     #[test]
     fn recompute_max_corrupt_data_sharded() {
-        const SHARD_LEN: usize = 1;
+        const SHARD_LEN: usize = 16;
 
         let bases = BasesLut11d::new();
 
@@ -844,6 +739,41 @@ mod tests {
             let mut received_slices: Vec<&mut [Gf2p8_11d]> =
                 received.iter_mut().map(|shard| shard.as_mut()).collect();
             bases.recompute_data_from_parity_sharded(&mut received_slices);
+            assert_eq!(received, original);
+        }
+    }
+
+    #[test]
+    fn recover_erasure_shards() {
+        const SHARD_LEN: usize = 8;
+
+        let bases = BasesLut11d::new();
+        let zero_shard = vec![Gf2p8_11d::zero(); SHARD_LEN];
+
+        for t_log in 1..8 {
+            let t_parity = 1 << t_log;
+            let original = generate_sharded_lch_codeword(&bases, t_parity, SHARD_LEN);
+            let mut received = Vec::new();
+
+            for (i, shard) in original.iter().enumerate() {
+                if i & 1 == 1 {
+                    received.push(shard.clone());
+                } else {
+                    received.push(zero_shard.clone());
+                }
+            }
+
+            let erasure_positions: Vec<_> = (0..2 * t_parity).step_by(2).collect();
+
+            let mut received_slices: Vec<&mut [Gf2p8_11d]> =
+                received.iter_mut().map(|shard| shard.as_mut()).collect();
+
+            assert!(bases.recover_erasure_shards(
+                &mut received_slices,
+                t_parity,
+                &erasure_positions
+            ));
+
             assert_eq!(received, original);
         }
     }

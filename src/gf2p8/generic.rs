@@ -1039,61 +1039,6 @@ pub trait CantorBasisLut<G: Gf2p8Lut> {
     }
 }
 
-/// Computes the formal derivative of a polynomial in the basis X.
-/// Follows Eq 82 from the LNH paper.
-pub fn deriv_poly<G: Gf2p8>(coeffs: &[G], out: &mut [G], k: u8) {
-    if k == 0 {
-        out[0] = G::zero();
-        return;
-    }
-
-    let half = 1 << (k - 1);
-    let (low, high) = coeffs.split_at(half);
-    let (out_low, out_high) = out.split_at_mut(half);
-
-    // Compute [D0]' and [D1]'
-    deriv_poly(low, out_low, k - 1);
-    deriv_poly(high, out_high, k - 1);
-
-    // Combine the results according to Eq 82
-    // out_low has [D0]'
-    // out_high has [D1]'
-
-    // Term 2: Add s'_{k-1} * D1. Assuming s' = 1, we XOR high into out_low.
-    for (l, h) in out_low.iter_mut().zip(high.iter()) {
-        *l = l.add(*h);
-    }
-
-    // Term 3: s_{k-1} * [D1]' is already in out_high.  Multiplying by s_{k-1} in basis X is
-    // just a shift into the upper half of the coefficient vector.
-}
-
-pub fn deriv_poly_iterative<G: Gf2p8>(coeffs: &[G], out: &mut [G]) {
-    let n = coeffs.len();
-    let m = n.trailing_zeros() as usize;
-
-    // TODO: eliminate double init
-    out.fill(G::zero());
-
-    for j in (1..=m).rev() {
-        let step = 1 << j;
-        let half = 1 << (j - 1);
-
-        // Iterate through each subspace coset at this level
-        for start in (0..n).step_by(step) {
-            let (low_out, _high_out) = out[start..start + step].split_at_mut(half);
-            let high_in = &coeffs[start + half..start + step];
-
-            // Eq 82: Low Part += s'_{j-1} * High Part
-            // The high part of 'out' is updated automatically in subsequent iterations
-            // (smaller j) acting on the high blocks.
-            for (l, &h) in low_out.iter_mut().zip(high_in.iter()) {
-                *l = l.add(h);
-            }
-        }
-    }
-}
-
 /// Derivative in the LNH basis based on Eq 82
 pub fn deriv_poly_lnh<G: Gf2p8>(coeffs: &[G; FIELD_SIZE]) -> [G; FIELD_SIZE] {
     let mut res = [G::zero(); FIELD_SIZE];
@@ -1199,12 +1144,12 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
             unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut &mut [G], t_parity) };
         for i in 0..message.len() / t_parity {
             for j in 0..t_parity {
-                workspace[j].copy_from_slice(&message[i * t_parity + j]);
+                workspace[j].copy_from_slice(message[i * t_parity + j]);
             }
             let omega = self.get_subspace_point_lut(((i + 1) * t_parity) as u8);
             self.ifft_sharded(workspace, t_log, omega);
             for j in 0..t_parity {
-                G::shard_add(&mut parity[j], &workspace[j]);
+                G::shard_add(parity[j], workspace[j]);
             }
         }
 
@@ -1299,7 +1244,7 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
 
         for i in 0..t_parity {
             // G::shard_add(&mut received[i + t_parity], &workspace[i]);
-            received[i + t_parity].copy_from_slice(&workspace[i]);
+            received[i + t_parity].copy_from_slice(workspace[i]);
         }
     }
 
@@ -1323,23 +1268,23 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         // Step 1: syndrome
         let syndrome = self.compute_syndrome_scalar(received, t_log);
         if syndrome.iter().take(t_parity).all(|&c| c == G::zero()) {
-            println!("Syndrome is zero.");
+            // println!("Syndrome is zero.");
             return true;
         }
-        println!(
-            "syndrome[..t_parity] = {:?}",
-            &syndrome[..t_parity]
-                .iter()
-                .map(|&x| x.into())
-                .collect::<Vec<_>>()
-        );
+        // println!(
+        //     "syndrome[..t_parity] = {:?}",
+        //     &syndrome[..t_parity]
+        //         .iter()
+        //         .map(|&x| x.into())
+        //         .collect::<Vec<_>>()
+        // );
 
         // Step 2: key equation
         let (v1, lambda) = match self.solve_key_equation_hgcd(&syndrome, t_log) {
             Some(pair) => pair,
             None => {
                 // TODO: error type enum
-                println!("Key equation has no solution.");
+                // println!("Key equation has no solution.");
                 return false;
             }
         };
@@ -1347,7 +1292,7 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         let deg_lambda = match lambda.degree() {
             Some(d) => d,
             None => {
-                println!("Zero locator - no errors.");
+                // println!("Zero locator - no errors.");
                 return true;
             }
         };
@@ -1371,12 +1316,12 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
         }
 
         if error_indices.len() < deg_lambda {
-            println!(
-                "Too few roots. deg_lambda={deg_lambda}, error_indices={error_indices:?}, syndrome={:?}, v1={:?}, lambda={:?}",
-                syndrome.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
-                v1.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
-                lambda.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
-            );
+            // println!(
+            //     "Too few roots. deg_lambda={deg_lambda}, error_indices={error_indices:?}, syndrome={:?}, v1={:?}, lambda={:?}",
+            //     syndrome.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
+            //     v1.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
+            //     lambda.iter().map(|&x| x.into()).collect::<Vec<u8>>(),
+            // );
             return false; // too few roots, uncorrectable
         }
 
@@ -1408,6 +1353,163 @@ pub trait Codec<G: Gf2p8Lut>: CantorBasisLut<G> + LchBasisLut<G> {
                 }
                 let error_val = q_evals[offset].mul_lut(lp.inv_lut());
                 received[global] = received[global].add(error_val);
+            }
+        }
+
+        true
+    }
+
+    fn erasure_locator_and_denominators(
+        &self,
+        erasure_positions: &[usize],
+    ) -> ([G; FIELD_SIZE], [G; FIELD_SIZE]) {
+        let erasure_count = erasure_positions.len();
+
+        let mut pts = [G::zero(); FIELD_SIZE];
+        for (k, &pos) in erasure_positions.iter().enumerate() {
+            pts[k] = self.get_subspace_point_lut(pos as u8);
+        }
+
+        let mut lambda = [G::zero(); FIELD_SIZE];
+        lambda[0] = G::one();
+        for k in 0..erasure_count {
+            let p = pts[k];
+            for j in (1..=k + 1).rev() {
+                lambda[j] = lambda[j - 1].add(p.mul_lut(lambda[j]));
+            }
+            lambda[0] = p.mul_lut(lambda[0]);
+        }
+
+        let mut denoms = [G::zero(); FIELD_SIZE];
+        for j in 0..erasure_count {
+            denoms[j] = (0..erasure_count)
+                .filter(|&i| i != j)
+                .fold(G::one(), |acc, i| acc.mul_lut(pts[j].add(pts[i])));
+        }
+
+        (lambda, denoms)
+    }
+
+    fn forney_sharded(
+        q: &[&[G]],
+        erasure_positions: &[usize],
+        denoms: &[G],
+        out: &mut [&mut [G]], // one shard per erased position, in order
+    ) {
+        for (k, (&pos, &d)) in erasure_positions.iter().zip(denoms).enumerate() {
+            let lut = d.inv_lut().make_mul_lut();
+            for (o, &num) in out[k].iter_mut().zip(q[pos].iter()) {
+                *o = lut[num.into_usize()];
+            }
+        }
+    }
+
+    fn recover_erasure_shards(
+        &self,
+        received: &mut [&mut [G]],
+        k_msg: usize,
+        erasure_positions: &[usize],
+    ) -> bool {
+        let n = received.len();
+        let t_parity = n - k_msg;
+        let e = erasure_positions.len();
+
+        if e > t_parity {
+            return false;
+        }
+        if e == 0 || t_parity == 0 {
+            return true;
+        }
+
+        let t_log = t_parity.trailing_zeros() as u8;
+        let shard_len = received[0].len();
+
+        let (lambda, denoms) = self.erasure_locator_and_denominators(erasure_positions);
+
+        let mut work_backing = vec![G::zero(); n * shard_len];
+        let mut work_hdrs: [MaybeUninit<&mut [G]>; FIELD_SIZE] =
+            unsafe { MaybeUninit::uninit().assume_init() };
+        for (i, chunk) in work_backing.chunks_mut(shard_len).enumerate() {
+            work_hdrs[i].write(chunk);
+        }
+        let work: &mut [&mut [G]] =
+            unsafe { std::slice::from_raw_parts_mut(work_hdrs.as_mut_ptr() as *mut &mut [G], n) };
+
+        // Chunk 0: parity block at ω_0
+        for i in 0..t_parity {
+            work[i].copy_from_slice(received[i]);
+        }
+        self.ifft_sharded(&mut work[..t_parity], t_log, G::zero());
+
+        // Chunks 1 .. n/T-1: message blocks, each shifted by one more ωT
+        {
+            let mut msg_backing = vec![G::zero(); t_parity * shard_len];
+            let mut msg_hdrs: [MaybeUninit<&mut [G]>; FIELD_SIZE / 2] =
+                unsafe { MaybeUninit::uninit().assume_init() };
+            for (i, chunk) in msg_backing.chunks_mut(shard_len).enumerate() {
+                msg_hdrs[i].write(chunk);
+            }
+            let msg: &mut [&mut [G]] = unsafe {
+                std::slice::from_raw_parts_mut(msg_hdrs.as_mut_ptr() as *mut &mut [G], t_parity)
+            };
+
+            for chunk in 1..(n / t_parity) {
+                let omega = self.get_subspace_point_lut((chunk * t_parity) as u8);
+                for i in 0..t_parity {
+                    msg[i].copy_from_slice(received[chunk * t_parity + i]);
+                }
+                self.ifft_sharded(msg, t_log, omega);
+                for i in 0..t_parity {
+                    G::shard_add(work[i], msg[i]);
+                }
+            }
+        }
+
+        // Horner evaluation of λ in the monomial basis at all n Cantor subspace points
+        let mut lambda_evals = [G::zero(); FIELD_SIZE];
+        for (i, u) in lambda_evals.iter_mut().take(n).enumerate() {
+            let p = self.get_subspace_point_lut(i as u8);
+            let mut v = lambda[e]; // monic coefficient = G::one()
+            for j in (0..e).rev() {
+                v = v.mul_lut(p).add(lambda[j]);
+            }
+            *u = v;
+        }
+
+        // Evaluate s at all n points
+        self.fft_sharded(work, t_log + 1, G::zero());
+
+        // Pointwise multiply: work[i] := work[i] · λ(ω_i)
+        for i in 0..n {
+            let lut = lambda_evals[i].make_mul_lut();
+            for b in work[i].iter_mut() {
+                *b = lut[b.into_usize()];
+            }
+        }
+
+        // X-basis coefficients of (s·λ); q is in work[T .. T+e]
+        self.ifft_sharded(work, t_log + 1, G::zero());
+
+        // Shift q from work[T..T+e] down to work[0..e], zero everything else
+        {
+            let (lo, hi) = work.split_at_mut(t_parity);
+            for k in 0..e {
+                lo[k].copy_from_slice(hi[k]);
+                hi[k].fill(G::zero());
+            }
+            for l in lo.iter_mut().skip(e).take(t_parity) {
+                l.fill(G::zero());
+            }
+        }
+
+        // Evaluate q at all n points
+        self.fft_sharded(work, n.trailing_zeros() as u8, G::zero());
+
+        // (Forney) Eq 78: u(ω_i) = q(ω_i) / λ'(ω_i)
+        for (&pos, d) in erasure_positions.iter().zip(denoms) {
+            let lut = d.inv_lut().make_mul_lut();
+            for (dst, &src) in received[pos].iter_mut().zip(work[pos].iter()) {
+                *dst = lut[src.into_usize()];
             }
         }
 
